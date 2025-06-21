@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus Agents</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+        }
+        .task-card {
+            margin-bottom: 1rem;
+        }
+        .task-status {
+            font-weight: bold;
+        }
+        .status-created { color: #6c757d; }
+        .status-planning { color: #17a2b8; }
+        .status-searching { color: #007bff; }
+        .status-summarizing { color: #fd7e14; }
+        .status-reasoning { color: #6f42c1; }
+        .status-generating_artifacts { color: #e83e8c; }
+        .status-completed { color: #28a745; }
+        .status-failed { color: #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Nexus Agents</h1>
+        
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Create Research Task</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="create-task-form">
+                            <div class="mb-3">
+                                <label for="title" class="form-label">Title</label>
+                                <input type="text" class="form-control" id="title" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="description" class="form-label">Description</label>
+                                <textarea class="form-control" id="description" rows="3" required></textarea>
+                            </div>
+                            <div class="mb-3 form-check">
+                                <input type="checkbox" class="form-check-input" id="continuous-mode">
+                                <label class="form-check-label" for="continuous-mode">Continuous Mode</label>
+                            </div>
+                            <div class="mb-3" id="interval-container" style="display: none;">
+                                <label for="interval" class="form-label">Update Interval (hours)</label>
+                                <input type="number" class="form-control" id="interval" value="24" min="1">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Create Task</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-12">
+                <h2>Research Tasks</h2>
+                <div id="tasks-container">
+                    <p>No tasks yet. Create one above!</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // API endpoint
+        const API_URL = window.location.protocol + '//' + window.location.hostname + ':12000';
+        
+        // Task IDs
+        let taskIds = [];
+        
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load tasks from local storage
+            const storedTaskIds = localStorage.getItem('nexus_task_ids');
+            if (storedTaskIds) {
+                taskIds = JSON.parse(storedTaskIds);
+                refreshTasks();
+            }
+            
+            // Set up the form
+            const form = document.getElementById('create-task-form');
+            form.addEventListener('submit', createTask);
+            
+            // Set up the continuous mode checkbox
+            const continuousModeCheckbox = document.getElementById('continuous-mode');
+            continuousModeCheckbox.addEventListener('change', function() {
+                const intervalContainer = document.getElementById('interval-container');
+                intervalContainer.style.display = this.checked ? 'block' : 'none';
+            });
+            
+            // Refresh tasks every 10 seconds
+            setInterval(refreshTasks, 10000);
+        });
+        
+        // Create a new task
+        async function createTask(event) {
+            event.preventDefault();
+            
+            const title = document.getElementById('title').value;
+            const description = document.getElementById('description').value;
+            const continuousMode = document.getElementById('continuous-mode').checked;
+            const interval = document.getElementById('interval').value;
+            
+            const data = {
+                title,
+                description,
+                continuous_mode: continuousMode,
+                continuous_interval_hours: continuousMode ? parseInt(interval) : null
+            };
+            
+            try {
+                const response = await fetch(`${API_URL}/tasks`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                // Add the task ID to the list
+                taskIds.push(result.task_id);
+                
+                // Save the task IDs to local storage
+                localStorage.setItem('nexus_task_ids', JSON.stringify(taskIds));
+                
+                // Refresh the tasks
+                refreshTasks();
+                
+                // Reset the form
+                document.getElementById('create-task-form').reset();
+                document.getElementById('interval-container').style.display = 'none';
+            } catch (error) {
+                console.error('Error creating task:', error);
+                alert('Error creating task: ' + error.message);
+            }
+        }
+        
+        // Refresh the tasks
+        async function refreshTasks() {
+            const tasksContainer = document.getElementById('tasks-container');
+            
+            if (taskIds.length === 0) {
+                tasksContainer.innerHTML = '<p>No tasks yet. Create one above!</p>';
+                return;
+            }
+            
+            // Clear the container
+            tasksContainer.innerHTML = '';
+            
+            // Fetch each task
+            for (const taskId of taskIds) {
+                try {
+                    const response = await fetch(`${API_URL}/tasks/${taskId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const task = await response.json();
+                    
+                    // Create a card for the task
+                    const card = document.createElement('div');
+                    card.className = 'card task-card';
+                    
+                    // Create the card header
+                    const cardHeader = document.createElement('div');
+                    cardHeader.className = 'card-header';
+                    cardHeader.innerHTML = `
+                        <h5 class="card-title mb-0">${task.title}</h5>
+                    `;
+                    
+                    // Create the card body
+                    const cardBody = document.createElement('div');
+                    cardBody.className = 'card-body';
+                    cardBody.innerHTML = `
+                        <p><strong>ID:</strong> ${task.task_id}</p>
+                        <p><strong>Description:</strong> ${task.description}</p>
+                        <p><strong>Status:</strong> <span class="task-status status-${task.status}">${task.status}</span></p>
+                        <p><strong>Continuous Mode:</strong> ${task.continuous_mode ? 'Yes' : 'No'}</p>
+                        ${task.continuous_mode ? `<p><strong>Update Interval:</strong> ${task.continuous_interval_hours} hours</p>` : ''}
+                        <p><strong>Created:</strong> ${task.created_at || 'N/A'}</p>
+                        <p><strong>Updated:</strong> ${task.updated_at || 'N/A'}</p>
+                    `;
+                    
+                    // Add artifacts if any
+                    if (task.artifacts && task.artifacts.length > 0) {
+                        const artifactsSection = document.createElement('div');
+                        artifactsSection.innerHTML = '<h6>Artifacts:</h6>';
+                        
+                        const artifactsList = document.createElement('ul');
+                        for (const artifact of task.artifacts) {
+                            const artifactItem = document.createElement('li');
+                            artifactItem.innerHTML = `
+                                <strong>${artifact.title}</strong> (${artifact.type})
+                                <br>
+                                <small>${artifact.filepath}</small>
+                            `;
+                            artifactsList.appendChild(artifactItem);
+                        }
+                        
+                        artifactsSection.appendChild(artifactsList);
+                        cardBody.appendChild(artifactsSection);
+                    }
+                    
+                    // Add the header and body to the card
+                    card.appendChild(cardHeader);
+                    card.appendChild(cardBody);
+                    
+                    // Add the card to the container
+                    tasksContainer.appendChild(card);
+                } catch (error) {
+                    console.error(`Error fetching task ${taskId}:`, error);
+                    
+                    // Create an error card
+                    const errorCard = document.createElement('div');
+                    errorCard.className = 'card task-card';
+                    errorCard.innerHTML = `
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Error</h5>
+                        </div>
+                        <div class="card-body">
+                            <p>Error fetching task ${taskId}: ${error.message}</p>
+                        </div>
+                    `;
+                    
+                    tasksContainer.appendChild(errorCard);
+                }
+            }
+        }
+    </script>
+</body>
+</html>

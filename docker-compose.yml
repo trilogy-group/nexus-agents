@@ -1,0 +1,46 @@
+version: '3'
+
+services:
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "12000:12000"
+    depends_on:
+      - redis
+      - mongodb
+    command: python api.py --host 0.0.0.0 --port 12000
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - MONGO_URI=mongodb://mongodb:27017/
+    volumes:
+      - ./output:/app/output
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "12001:12001"
+    depends_on:
+      - api
+    command: python web/server.py --host 0.0.0.0 --port 12001
+
+volumes:
+  redis-data:
+  mongodb-data:
