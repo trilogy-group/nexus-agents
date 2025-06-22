@@ -9,22 +9,20 @@ import os
 import uuid
 from typing import Any, Dict, List, Optional
 
-from src.agents import (
-    BaseAgent,
-    LinkUpSearchAgent,
-    ExaSearchAgent,
-    PerplexitySearchAgent,
-    FirecrawlSearchAgent,
-    TopicDecomposerAgent,
-    ResearchPlanningAgent,
-    SummarizationAgent,
-    ReasoningAgent
-)
-from src.orchestration.communication_bus import CommunicationBus
-from src.orchestration.task_manager import TaskManager
-from src.orchestration.agent_spawner import AgentSpawner
-from src.llm import LLMClient
-from src.config.search_providers import SearchProvidersConfig
+from .orchestration.communication_bus import CommunicationBus
+from .orchestration.task_manager import TaskManager
+from .orchestration.agent_spawner import AgentSpawner
+from .llm import LLMClient
+from .config.search_providers import SearchProvidersConfig
+from .simple_mcp_client import SimpleMCPClient, SimpleMCPSearchClient
+from .search_retrieval.linkup_search_agent import LinkupSearchAgent
+from .search_retrieval.exa_search_agent import ExaSearchAgent
+from .search_retrieval.perplexity_search_agent import PerplexitySearchAgent
+from .search_retrieval.firecrawl_search_agent import FirecrawlSearchAgent
+from .research_planning.topic_decomposer import TopicDecomposerAgent
+from .research_planning.planning_module import PlanningModule as ResearchPlanningAgent
+from .summarization.summarization_agent import SummarizationAgent
+from .summarization.reasoning_agent import ReasoningAgent
 
 
 class NexusAgents:
@@ -64,24 +62,25 @@ class NexusAgents:
         self.neo4j_password = neo4j_password
         
         # Create the task manager
-        self.task_manager = TaskManager(communication_bus=communication_bus)
+        self.task_manager = TaskManager()
         
         # Create the agent spawner
         self.agent_spawner = AgentSpawner(communication_bus=communication_bus)
+        
+        # Create simple MCP client
+        self.mcp_client = SimpleMCPClient()
+        self.mcp_search_client = SimpleMCPSearchClient()
         
         # Initialize the agents
         self.agents = {}
     
     async def start(self):
         """Start the Nexus Agents system."""
-        # Start the communication bus
-        await self.communication_bus.start()
+        # Connect to the communication bus
+        await self.communication_bus.connect()
         
-        # Start the task manager
-        await self.task_manager.start()
-        
-        # Start the agent spawner
-        await self.agent_spawner.start()
+        # Initialize MCP search client
+        await self.mcp_search_client.initialize()
         
         # Create and start the agents
         await self._create_and_start_agents()
@@ -92,120 +91,103 @@ class NexusAgents:
         for agent in self.agents.values():
             await agent.stop()
         
-        # Stop the agent spawner
-        await self.agent_spawner.stop()
+        # Close MCP connections
+        await self.mcp_search_client.close()
         
-        # Stop the task manager
-        await self.task_manager.stop()
-        
-        # Stop the communication bus
-        await self.communication_bus.stop()
+        # Disconnect from the communication bus
+        await self.communication_bus.disconnect()
     
     async def _create_and_start_agents(self):
         """Create and start all agents."""
         # Create and start the topic decomposer agent
         topic_decomposer = TopicDecomposerAgent(
-            agent_id="topic_decomposer",
+            agent_id=f"topic_decomposer_{uuid.uuid4().hex[:8]}",
             name="Topic Decomposer",
-            description="Breaks down high-level research queries into a hierarchical tree of sub-topics",
+            description="Breaks down research queries into hierarchical sub-topics",
             communication_bus=self.communication_bus,
-            llm_client=self.llm_client
+            tools=[],
+            parameters={
+                "task_manager": self.task_manager,
+                "llm_client": self.llm_client
+            }
         )
         self.agents["topic_decomposer"] = topic_decomposer
         await topic_decomposer.start()
         
         # Create and start the research planning agent
         research_planner = ResearchPlanningAgent(
-            agent_id="research_planner",
+            agent_id=f"research_planner_{uuid.uuid4().hex[:8]}",
             name="Research Planner",
-            description="Creates a research plan based on a topic decomposition",
+            description="Creates detailed execution plans for research tasks",
             communication_bus=self.communication_bus,
-            llm_client=self.llm_client
+            tools=[],
+            parameters={
+                "task_manager": self.task_manager,
+                "llm_client": self.llm_client
+            }
         )
         self.agents["research_planner"] = research_planner
         await research_planner.start()
         
-        # Create and start the search agents
-        enabled_providers = self.search_providers_config.get_enabled_providers()
+        # Create and start the MCP-based search agents
+        linkup_agent = LinkupSearchAgent(
+            communication_bus=self.communication_bus,
+            mcp_client=self.mcp_client
+        )
+        self.agents["linkup_search"] = linkup_agent
+        await linkup_agent.start()
         
-        # LinkUp
-        if "linkup" in enabled_providers:
-            linkup_config = enabled_providers["linkup"]
-            linkup_agent = LinkUpSearchAgent(
-                agent_id="linkup_search",
-                name="LinkUp Search",
-                description="Performs web searches using LinkUp",
-                communication_bus=self.communication_bus,
-                llm_client=self.llm_client,
-                linkup_api_key=linkup_config.api_key,
-                linkup_url=linkup_config.url
-            )
-            self.agents["linkup_search"] = linkup_agent
-            await linkup_agent.start()
+        exa_agent = ExaSearchAgent(
+            communication_bus=self.communication_bus,
+            mcp_client=self.mcp_client
+        )
+        self.agents["exa_search"] = exa_agent
+        await exa_agent.start()
         
-        # Exa
-        if "exa" in enabled_providers:
-            exa_config = enabled_providers["exa"]
-            exa_agent = ExaSearchAgent(
-                agent_id="exa_search",
-                name="Exa Search",
-                description="Performs web searches using Exa",
-                communication_bus=self.communication_bus,
-                llm_client=self.llm_client,
-                exa_api_key=exa_config.api_key,
-                exa_url=exa_config.url
-            )
-            self.agents["exa_search"] = exa_agent
-            await exa_agent.start()
+        perplexity_agent = PerplexitySearchAgent(
+            communication_bus=self.communication_bus,
+            mcp_client=self.mcp_client
+        )
+        self.agents["perplexity_search"] = perplexity_agent
+        await perplexity_agent.start()
         
-        # Perplexity
-        if "perplexity" in enabled_providers:
-            perplexity_config = enabled_providers["perplexity"]
-            perplexity_agent = PerplexitySearchAgent(
-                agent_id="perplexity_search",
-                name="Perplexity Search",
-                description="Performs web searches using Perplexity",
-                communication_bus=self.communication_bus,
-                llm_client=self.llm_client,
-                perplexity_api_key=perplexity_config.api_key,
-                perplexity_url=perplexity_config.url
-            )
-            self.agents["perplexity_search"] = perplexity_agent
-            await perplexity_agent.start()
-        
-        # Firecrawl
-        if "firecrawl" in enabled_providers:
-            firecrawl_config = enabled_providers["firecrawl"]
-            firecrawl_agent = FirecrawlSearchAgent(
-                agent_id="firecrawl_search",
-                name="Firecrawl Search",
-                description="Performs web searches and crawling using Firecrawl",
-                communication_bus=self.communication_bus,
-                llm_client=self.llm_client,
-                firecrawl_api_key=firecrawl_config.api_key,
-                firecrawl_url=firecrawl_config.url
-            )
-            self.agents["firecrawl_search"] = firecrawl_agent
-            await firecrawl_agent.start()
+        firecrawl_agent = FirecrawlSearchAgent(
+            communication_bus=self.communication_bus,
+            mcp_client=self.mcp_client
+        )
+        self.agents["firecrawl_search"] = firecrawl_agent
+        await firecrawl_agent.start()
         
         # Create and start the summarization agent
         summarization_agent = SummarizationAgent(
-            agent_id="summarization",
-            name="Summarization",
-            description="Transforms raw data into concise, human-readable summaries",
+            agent_id=f"summarization_{uuid.uuid4().hex[:8]}",
+            name="Summarization Agent",
+            description="Transforms raw data into concise summaries",
             communication_bus=self.communication_bus,
-            llm_client=self.llm_client
+            tools=[],
+            parameters={
+                "task_manager": self.task_manager,
+                "task_id": "default",  # Will be updated when processing specific tasks
+                "subtask_id": "default",  # Will be updated when processing specific subtasks
+                "llm_client": self.llm_client
+            }
         )
         self.agents["summarization"] = summarization_agent
         await summarization_agent.start()
         
         # Create and start the reasoning agent
         reasoning_agent = ReasoningAgent(
-            agent_id="reasoning",
-            name="Reasoning",
-            description="Performs higher-order reasoning on summarized data",
+            agent_id=f"reasoning_{uuid.uuid4().hex[:8]}",
+            name="Reasoning Agent",
+            description="Performs synthesis, analysis, and evaluation",
             communication_bus=self.communication_bus,
-            llm_client=self.llm_client
+            tools=[],
+            parameters={
+                "task_manager": self.task_manager,
+                "task_id": "default",  # Will be updated when processing specific tasks
+                "subtask_id": "default",  # Will be updated when processing specific subtasks
+                "llm_client": self.llm_client
+            }
         )
         self.agents["reasoning"] = reasoning_agent
         await reasoning_agent.start()
