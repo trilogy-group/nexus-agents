@@ -58,7 +58,19 @@ class ResearchTaskStatus(BaseModel):
 async def startup_event():
     """Start the Nexus Agents system."""
     global nexus
-    nexus = NexusAgents()
+    
+    # Get configuration from environment variables
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    mongo_uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
+    output_dir = os.environ.get("OUTPUT_DIR", "output")
+    llm_config_path = os.environ.get("LLM_CONFIG", "config/llm_config.json")
+    
+    nexus = NexusAgents(
+        redis_url=redis_url,
+        mongo_uri=mongo_uri,
+        output_dir=output_dir,
+        llm_config_path=llm_config_path
+    )
     await nexus.start()
 
 

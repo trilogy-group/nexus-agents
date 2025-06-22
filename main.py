@@ -22,28 +22,7 @@ from src.summarization.reasoning_agent import ReasoningAgent
 from src.persistence.knowledge_base import KnowledgeBase
 from src.persistence.artifact_generator import ArtifactGenerator
 from src.persistence.continuous_augmentation import ContinuousAugmentation
-
-
-class LLMClient:
-    """A simple client for interacting with language models."""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        """Initialize the LLM client."""
-        self.model_name = model_name
-    
-    async def generate(self, prompt: str) -> str:
-        """
-        Generate text from a prompt.
-        
-        Args:
-            prompt: The prompt to generate from.
-            
-        Returns:
-            The generated text.
-        """
-        # This is a placeholder implementation
-        # In a real implementation, this would call an LLM API
-        return f"Generated text for prompt: {prompt[:50]}..."
+from src.llm import LLMClient, LLMConfig
 
 
 class NexusAgents:
@@ -51,11 +30,13 @@ class NexusAgents:
     
     def __init__(self, redis_url: str = "redis://localhost:6379/0",
                  mongo_uri: str = "mongodb://localhost:27017/",
-                 output_dir: str = "output"):
+                 output_dir: str = "output",
+                 llm_config_path: str = "config/llm_config.json"):
         """Initialize the Nexus Agents system."""
         self.redis_url = redis_url
         self.mongo_uri = mongo_uri
         self.output_dir = output_dir
+        self.llm_config_path = llm_config_path
         
         # Create the output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
@@ -65,7 +46,13 @@ class NexusAgents:
         self.communication_bus = CommunicationBus(redis_url=redis_url)
         self.agent_spawner = AgentSpawner(communication_bus=self.communication_bus)
         self.knowledge_base = KnowledgeBase(mongo_uri=mongo_uri)
-        self.llm_client = LLMClient()
+        
+        # Initialize the LLM client with the configuration
+        if os.path.exists(llm_config_path):
+            self.llm_client = LLMClient(config_path=llm_config_path)
+        else:
+            print(f"Warning: LLM configuration file {llm_config_path} not found. Using default configuration.")
+            self.llm_client = LLMClient()
         
         # Register agent types
         self.agent_spawner.register_agent_type("research_planning.TopicDecomposerAgent", TopicDecomposerAgent)
@@ -99,6 +86,9 @@ class NexusAgents:
         
         # Disconnect from the knowledge base
         await self.knowledge_base.disconnect()
+        
+        # Close the LLM client
+        await self.llm_client.close()
     
     async def _spawn_core_agents(self):
         """Spawn the core agents."""
@@ -258,13 +248,15 @@ async def main():
     parser.add_argument("--redis-url", default="redis://localhost:6379/0", help="Redis URL")
     parser.add_argument("--mongo-uri", default="mongodb://localhost:27017/", help="MongoDB URI")
     parser.add_argument("--output-dir", default="output", help="Output directory")
+    parser.add_argument("--llm-config", default="config/llm_config.json", help="LLM configuration file")
     args = parser.parse_args()
     
     # Create the Nexus Agents system
     nexus = NexusAgents(
         redis_url=args.redis_url,
         mongo_uri=args.mongo_uri,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        llm_config_path=args.llm_config
     )
     
     # Start the system
