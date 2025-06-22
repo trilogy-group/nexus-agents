@@ -29,12 +29,14 @@ class NexusAgents:
     """The main Nexus Agents system."""
     
     def __init__(self, redis_url: str = "redis://localhost:6379/0",
-                 mongo_uri: str = "mongodb://localhost:27017/",
+                 duckdb_path: str = "data/nexus_agents.db",
+                 storage_path: str = "data/storage",
                  output_dir: str = "output",
                  llm_config_path: str = "config/llm_config.json"):
         """Initialize the Nexus Agents system."""
         self.redis_url = redis_url
-        self.mongo_uri = mongo_uri
+        self.duckdb_path = duckdb_path
+        self.storage_path = storage_path
         self.output_dir = output_dir
         self.llm_config_path = llm_config_path
         
@@ -45,7 +47,7 @@ class NexusAgents:
         self.task_manager = TaskManager()
         self.communication_bus = CommunicationBus(redis_url=redis_url)
         self.agent_spawner = AgentSpawner(communication_bus=self.communication_bus)
-        self.knowledge_base = KnowledgeBase(mongo_uri=mongo_uri)
+        self.knowledge_base = KnowledgeBase(db_path=duckdb_path, storage_path=storage_path)
         
         # Initialize the LLM client with the configuration
         if os.path.exists(llm_config_path):
@@ -246,7 +248,8 @@ async def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Nexus Agents - Multi-Agent Deep Research System")
     parser.add_argument("--redis-url", default="redis://localhost:6379/0", help="Redis URL")
-    parser.add_argument("--mongo-uri", default="mongodb://localhost:27017/", help="MongoDB URI")
+    parser.add_argument("--duckdb-path", default="data/nexus_agents.db", help="DuckDB database path")
+    parser.add_argument("--storage-path", default="data/storage", help="File storage path")
     parser.add_argument("--output-dir", default="output", help="Output directory")
     parser.add_argument("--llm-config", default="config/llm_config.json", help="LLM configuration file")
     args = parser.parse_args()
@@ -254,7 +257,8 @@ async def main():
     # Create the Nexus Agents system
     nexus = NexusAgents(
         redis_url=args.redis_url,
-        mongo_uri=args.mongo_uri,
+        duckdb_path=args.duckdb_path,
+        storage_path=args.storage_path,
         output_dir=args.output_dir,
         llm_config_path=args.llm_config
     )

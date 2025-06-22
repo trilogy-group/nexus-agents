@@ -40,7 +40,7 @@ Nexus Agents uses a true multi-agent architecture with the following key compone
   - **Firecrawl Search Agent**: Uses the Firecrawl MCP server to perform searches and crawling.
 - **Summarization Agent**: Transforms raw data into concise, human-readable summaries.
 - **Reasoning Agent**: Performs higher-order reasoning on summarized data.
-- **Knowledge Base**: A persistent storage system for all research artifacts.
+- **Knowledge Base**: A persistent storage system using DuckDB for structured/JSON data and file system for binary files.
 - **LLM Client**: A client for interacting with various language model providers, including OpenAI, Anthropic, Google, xAI, OpenRouter, and Ollama.
 
 ## LLM Configuration
@@ -131,11 +131,12 @@ For local development without API keys, you can use the Ollama configuration:
 4. Start the required services:
    ```
    # Using Docker Compose (recommended)
-   docker-compose up -d redis mongodb
+   docker-compose up -d redis
    
    # Or manually
    docker run -d -p 6379:6379 redis
-   docker run -d -p 27017:27017 mongo
+   
+   # Note: DuckDB is embedded and doesn't require a separate service
    ```
 
 5. Run the system:
@@ -206,8 +207,9 @@ async def run_example(query):
     # Load the search providers configuration
     search_providers_config = SearchProvidersConfig.from_env()
     
-    # Get the MongoDB URI
-    mongo_uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/nexus_agents")
+    # Get the DuckDB configuration
+    duckdb_path = os.environ.get("DUCKDB_PATH", "data/nexus_agents.db")
+    storage_path = os.environ.get("STORAGE_PATH", "data/storage")
     
     # Get the Neo4j configuration
     neo4j_uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
@@ -219,7 +221,8 @@ async def run_example(query):
         llm_client=llm_client,
         communication_bus=communication_bus,
         search_providers_config=search_providers_config,
-        mongo_uri=mongo_uri,
+        duckdb_path=duckdb_path,
+        storage_path=storage_path,
         neo4j_uri=neo4j_uri,
         neo4j_user=neo4j_user,
         neo4j_password=neo4j_password

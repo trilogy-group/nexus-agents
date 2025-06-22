@@ -36,7 +36,8 @@ class NexusAgents:
                  llm_client: LLMClient,
                  communication_bus: CommunicationBus,
                  search_providers_config: SearchProvidersConfig,
-                 mongo_uri: str = None,
+                 duckdb_path: str = None,
+                 storage_path: str = None,
                  neo4j_uri: str = None,
                  neo4j_user: str = None,
                  neo4j_password: str = None):
@@ -47,7 +48,8 @@ class NexusAgents:
             llm_client: The LLM client for generating responses.
             communication_bus: The communication bus for inter-agent communication.
             search_providers_config: The configuration for search providers.
-            mongo_uri: The URI for the MongoDB database.
+            duckdb_path: The path to the DuckDB database file.
+            storage_path: The path to the file storage directory.
             neo4j_uri: The URI for the Neo4j database.
             neo4j_user: The username for the Neo4j database.
             neo4j_password: The password for the Neo4j database.
@@ -55,7 +57,8 @@ class NexusAgents:
         self.llm_client = llm_client
         self.communication_bus = communication_bus
         self.search_providers_config = search_providers_config
-        self.mongo_uri = mongo_uri
+        self.duckdb_path = duckdb_path
+        self.storage_path = storage_path
         self.neo4j_uri = neo4j_uri
         self.neo4j_user = neo4j_user
         self.neo4j_password = neo4j_password

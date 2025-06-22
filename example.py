@@ -51,8 +51,9 @@ async def run_example(query: str, output_path: str = None, config_path: str = No
     enabled_providers = search_providers_config.get_enabled_providers()
     print(f"Enabled search providers: {', '.join(enabled_providers.keys())}")
     
-    # Get the MongoDB URI
-    mongo_uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/nexus_agents")
+    # Get the DuckDB configuration
+    duckdb_path = os.environ.get("DUCKDB_PATH", "data/nexus_agents.db")
+    storage_path = os.environ.get("STORAGE_PATH", "data/storage")
     
     # Get the Neo4j configuration
     neo4j_uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
@@ -64,7 +65,8 @@ async def run_example(query: str, output_path: str = None, config_path: str = No
         llm_client=llm_client,
         communication_bus=communication_bus,
         search_providers_config=search_providers_config,
-        mongo_uri=mongo_uri,
+        duckdb_path=duckdb_path,
+        storage_path=storage_path,
         neo4j_uri=neo4j_uri,
         neo4j_user=neo4j_user,
         neo4j_password=neo4j_password
