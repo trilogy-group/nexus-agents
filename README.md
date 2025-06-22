@@ -16,21 +16,31 @@ The system is composed of several layers and components, each with a specific ro
 4. **Summarization & Higher-Order Reasoning Layer**: Responsible for synthesizing information, identifying insights, and evaluating the quality of data.
 5. **Feedback & Iterative Refinement Layer**: This layer enables the system to learn from its operations and to continuously improve its performance.
 
+## Multi-Agent Architecture
+
+Nexus Agents uses a true multi-agent architecture with the following key components:
+
+1. **Agent-to-Agent (A2A) Communication Protocol**: Agents communicate with each other using a standardized protocol that enables them to exchange messages, request services, and collaborate on tasks.
+
+2. **Model-Context-Protocol (MCP) for Tool Use**: Agents use the Model-Context-Protocol to interact with external tools and services, such as search engines and web crawlers.
+
+3. **Specialized Agents**: Each agent has a specific role and capabilities, and they work together to accomplish complex tasks.
+
 ## Components
 
 - **Task Manager**: Manages the overall research process, tracking the state of each task.
-- **Communication Bus**: A message-passing system that enables communication between agents.
+- **Communication Bus**: A message-passing system that enables communication between agents using the A2A protocol.
 - **Agent Spawner**: Responsible for creating and managing the lifecycle of agents.
 - **Topic Decomposer Agent**: A specialized agent that takes a high-level research query and breaks it down into a hierarchical tree of sub-topics.
-- **Planning Module**: Sets milestones, schedules, and agent assignments based on the decomposition tree.
-- **Search Agents**: A pool of specialized agents responsible for querying various data sources.
-- **Browser Agent**: A specialized agent capable of navigating websites and interacting with web UIs to extract specific information.
-- **Data Aggregation Service**: Collects and normalizes data from the various search agents.
-- **Summarization Agents**: Transforms raw data into concise, human-readable summaries.
-- **Reasoning Agents**: Performs synthesis, analysis, and evaluation of the summarized data.
+- **Research Planning Agent**: Creates a research plan based on a topic decomposition.
+- **Search Agents**: Specialized agents for different search providers:
+  - **LinkUp Search Agent**: Uses the LinkUp MCP server to perform searches.
+  - **Exa Search Agent**: Uses the Exa MCP server to perform searches.
+  - **Perplexity Search Agent**: Uses the Perplexity MCP server to perform searches.
+  - **Firecrawl Search Agent**: Uses the Firecrawl MCP server to perform searches and crawling.
+- **Summarization Agent**: Transforms raw data into concise, human-readable summaries.
+- **Reasoning Agent**: Performs higher-order reasoning on summarized data.
 - **Knowledge Base**: A persistent storage system for all research artifacts.
-- **Artifact Generator**: Generates various output formats from the research data.
-- **Continuous Augmentation**: Continuously updates the knowledge base and artifacts.
 - **LLM Client**: A client for interacting with various language model providers, including OpenAI, Anthropic, Google, xAI, OpenRouter, and Ollama.
 
 ## LLM Configuration
@@ -171,66 +181,79 @@ curl http://localhost:12000/tasks/{task_id}
 
 ```python
 import asyncio
+import json
 import os
 from dotenv import load_dotenv
-from main import NexusAgents, LLMConfig, LLMProvider
+from src.nexus_agents import NexusAgents
+from src.orchestration.communication_bus import CommunicationBus
+from src.llm import LLMClient
+from src.config.search_providers import SearchProvidersConfig
 
 # Load environment variables
 load_dotenv()
 
-async def run_example():
-    # Configure the LLM client
-    reasoning_config = LLMConfig(
-        provider=LLMProvider.OPENAI,
-        model_name="gpt-4-turbo",
-        api_key=os.environ.get("OPENAI_API_KEY"),
-        max_tokens=4096,
-        temperature=0.7
-    )
+async def run_example(query):
+    # Load the LLM client configuration
+    llm_config_path = os.environ.get("LLM_CONFIG", "config/llm_config.json")
     
-    task_config = LLMConfig(
-        provider=LLMProvider.ANTHROPIC,
-        model_name="claude-3-haiku-20240307",
-        api_key=os.environ.get("ANTHROPIC_API_KEY"),
-        max_tokens=2048,
-        temperature=0.5
-    )
+    # Create the LLM client
+    llm_client = LLMClient.from_config(llm_config_path)
+    
+    # Create the communication bus
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    communication_bus = CommunicationBus(redis_url=redis_url)
+    
+    # Load the search providers configuration
+    search_providers_config = SearchProvidersConfig.from_env()
+    
+    # Get the MongoDB URI
+    mongo_uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/nexus_agents")
+    
+    # Get the Neo4j configuration
+    neo4j_uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+    neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
+    neo4j_password = os.environ.get("NEO4J_PASSWORD", "password")
     
     # Create the Nexus Agents system
-    nexus = NexusAgents(
-        redis_url=os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
-        mongo_uri=os.environ.get("MONGO_URI", "mongodb://localhost:27017/"),
-        output_dir=os.environ.get("OUTPUT_DIR", "output"),
-        llm_config_path=os.environ.get("LLM_CONFIG")  # Will use the configs above if None
+    nexus_agents = NexusAgents(
+        llm_client=llm_client,
+        communication_bus=communication_bus,
+        search_providers_config=search_providers_config,
+        mongo_uri=mongo_uri,
+        neo4j_uri=neo4j_uri,
+        neo4j_user=neo4j_user,
+        neo4j_password=neo4j_password
     )
     
     # Start the system
-    await nexus.start()
+    await nexus_agents.start()
     
     try:
-        # Create a research task
-        task_id = await nexus.create_research_task(
-            title="The Impact of Artificial Intelligence on Healthcare",
-            description="Research the current and potential future impacts of AI on healthcare, including diagnostics, treatment planning, drug discovery, and patient care.",
-            continuous_mode=True,
-            continuous_interval_hours=24
-        )
+        # Run the research query
+        results = await nexus_agents.research(query)
         
-        # Wait for the task to complete
-        while True:
-            status = await nexus.get_task_status(task_id)
-            if status["status"] == "completed":
-                print(f"Task completed! Artifacts: {status['artifacts']}")
-                break
-            
-            print(f"Task status: {status['status']}")
-            await asyncio.sleep(10)
+        # Print the results
+        print(f"Research ID: {results['research_id']}")
+        print(f"Query: {results['query']}")
+        print(f"Decomposition: {len(results['decomposition'].get('subtopics', []))} subtopics")
+        print(f"Plan: {len(results['plan'].get('tasks', []))} tasks")
+        print(f"Results: {len(results['results'])} task results")
+        
+        # Save the results to a file
+        output_path = f"output/{results['research_id']}.json"
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"Results saved to: {output_path}")
+        
+        return results
     finally:
         # Stop the system
-        await nexus.stop()
+        await nexus_agents.stop()
 
 if __name__ == "__main__":
-    asyncio.run(run_example())
+    query = "The Impact of Artificial Intelligence on Healthcare"
+    asyncio.run(run_example(query))
 ```
 
 ### Using the Web Interface
