@@ -1,82 +1,76 @@
 #!/usr/bin/env python3
 """
-Simple test for MCP client implementation
+Simple test to verify MCP server availability.
 """
 import asyncio
+import subprocess
 import sys
 from pathlib import Path
 
 # Add the src directory to the Python path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from mcp_client import MCPClient
 
-
-async def test_simple_mcp():
-    """Test MCP client with a simple test server."""
-    print("Testing MCP client with simple test server...")
-    
-    mcp_client = MCPClient()
+async def test_server_executable(server_name: str, command: list):
+    """Test if a server command is executable."""
+    print(f"\n--- Testing {server_name} server executable ---")
     
     try:
-        # Connect to test server
-        script_path = Path(__file__).parent / "mcp_servers" / "test_server.py"
-        print(f"Connecting to test server at: {script_path}")
-        
-        success = await mcp_client.connect_to_server(
-            "test",
-            str(script_path),
-            {}
+        # Try to start the process
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
         
-        if success:
-            print("✓ Successfully connected to test server")
-            
-            # List available tools
-            try:
-                tools = await mcp_client.list_tools("test")
-                print(f"✓ Available tools: {[tool.name for tool in tools]}")
-            except Exception as e:
-                print(f"✗ Failed to list tools: {e}")
-            
-            # List available resources
-            try:
-                resources = await mcp_client.list_resources("test")
-                print(f"✓ Available resources: {[resource.uri for resource in resources]}")
-            except Exception as e:
-                print(f"✗ Failed to list resources: {e}")
-            
-            # Test echo tool
-            try:
-                result = await mcp_client.call_tool("test", "echo", {"message": "Hello MCP!"})
-                print(f"✓ Echo tool result: {result}")
-            except Exception as e:
-                print(f"✗ Failed to call echo tool: {e}")
-            
-            # Test add_numbers tool
-            try:
-                result = await mcp_client.call_tool("test", "add_numbers", {"a": 5, "b": 3})
-                print(f"✓ Add numbers tool result: {result}")
-            except Exception as e:
-                print(f"✗ Failed to call add_numbers tool: {e}")
-            
-            # Test resource
-            try:
-                result = await mcp_client.read_resource("test", "test://greeting/World")
-                print(f"✓ Resource result: {result}")
-            except Exception as e:
-                print(f"✗ Failed to read resource: {e}")
+        # Give it a moment to start
+        await asyncio.sleep(0.5)
         
+        # Check if it's still running
+        if process.returncode is None:
+            print(f"✓ {server_name} server started successfully")
+            
+            # Terminate the process
+            process.terminate()
+            await process.wait()
+            return True
         else:
-            print("✗ Failed to connect to test server")
-    
+            stderr = await process.stderr.read()
+            print(f"✗ {server_name} server failed to start: {stderr.decode()}")
+            return False
+            
+    except FileNotFoundError:
+        print(f"✗ {server_name} server command not found: {' '.join(command)}")
+        return False
     except Exception as e:
-        print(f"✗ Error during test: {e}")
+        print(f"✗ {server_name} server error: {e}")
+        return False
+
+
+async def main():
+    """Test all MCP servers."""
+    print("Testing MCP server executables...")
     
-    finally:
-        await mcp_client.disconnect_all()
-        print("✓ Disconnected from all servers")
+    servers = {
+        "linkup": ["mcp-search-linkup"],
+        "exa": ["node", str(Path(__file__).parent / "external_mcp_servers" / "exa-mcp" / ".smithery" / "index.cjs")],
+        "perplexity": ["node", str(Path(__file__).parent / "external_mcp_servers" / "perplexity-official-mcp" / "perplexity-ask" / "dist" / "index.js")],
+        "firecrawl": ["node", str(Path(__file__).parent / "external_mcp_servers" / "firecrawl-mcp" / "dist" / "index.js")]
+    }
+    
+    results = {}
+    for server_name, command in servers.items():
+        results[server_name] = await test_server_executable(server_name, command)
+    
+    print("\n--- Summary ---")
+    for server_name, success in results.items():
+        status = "✓" if success else "✗"
+        print(f"{status} {server_name}: {'Available' if success else 'Not available'}")
+    
+    return all(results.values())
 
 
 if __name__ == "__main__":
-    asyncio.run(test_simple_mcp())
+    success = asyncio.run(main())
+    sys.exit(0 if success else 1)

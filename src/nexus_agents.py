@@ -14,7 +14,7 @@ from .orchestration.task_manager import TaskManager
 from .orchestration.agent_spawner import AgentSpawner
 from .llm import LLMClient
 from .config.search_providers import SearchProvidersConfig
-from .simple_mcp_client import SimpleMCPClient, SimpleMCPSearchClient
+from .mcp_client_simple import SimpleMCPClient
 from .search_retrieval.linkup_search_agent import LinkupSearchAgent
 from .search_retrieval.exa_search_agent import ExaSearchAgent
 from .search_retrieval.perplexity_search_agent import PerplexitySearchAgent
@@ -67,9 +67,8 @@ class NexusAgents:
         # Create the agent spawner
         self.agent_spawner = AgentSpawner(communication_bus=communication_bus)
         
-        # Create simple MCP client
+        # Create MCP client
         self.mcp_client = SimpleMCPClient()
-        self.mcp_search_client = SimpleMCPSearchClient()
         
         # Initialize the agents
         self.agents = {}
@@ -79,8 +78,14 @@ class NexusAgents:
         # Connect to the communication bus
         await self.communication_bus.connect()
         
-        # Initialize MCP search client
-        await self.mcp_search_client.initialize()
+        # Connect to MCP servers
+        print("Connecting to MCP servers...")
+        connection_results = await self.mcp_client.connect_all_servers()
+        for server, success in connection_results.items():
+            if success:
+                print(f"✓ Connected to {server} MCP server")
+            else:
+                print(f"✗ Failed to connect to {server} MCP server")
         
         # Create and start the agents
         await self._create_and_start_agents()
@@ -92,7 +97,7 @@ class NexusAgents:
             await agent.stop()
         
         # Close MCP connections
-        await self.mcp_search_client.close()
+        await self.mcp_client.disconnect_all()
         
         # Disconnect from the communication bus
         await self.communication_bus.disconnect()

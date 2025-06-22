@@ -7,7 +7,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from ..orchestration.communication_bus import CommunicationBus
-from ..simple_mcp_client import SimpleMCPClient
+from ..mcp_client_simple import SimpleMCPClient
 
 
 class ExaSearchAgent:
