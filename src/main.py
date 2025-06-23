@@ -6,6 +6,10 @@ import os
 import json
 import argparse
 from typing import Dict, Any
+from dotenv import load_dotenv
+
+# Load .env file first - this should take precedence over environment variables
+load_dotenv(override=True)
 
 from src.nexus_agents import NexusAgents
 from src.orchestration.communication_bus import CommunicationBus

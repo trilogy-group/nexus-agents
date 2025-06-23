@@ -19,6 +19,7 @@ class Message(BaseModel):
     content: Dict[str, Any]
     message_id: str
     reply_to: Optional[str] = None
+    conversation_id: Optional[str] = None
 
 
 class CommunicationBus:

@@ -10,6 +10,10 @@ import asyncio
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+# Load .env file first - this should take precedence over environment variables
+load_dotenv(override=True)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

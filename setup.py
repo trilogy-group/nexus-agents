@@ -15,5 +15,5 @@ setup(
             "nexus-agents=main:main",
         ],
     },
-    python_requires=">=3.9",
+    python_requires=">=3.12",
 )

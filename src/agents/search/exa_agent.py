@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from src.agents.base_agent import BaseAgent, A2AAgentCard
 from src.orchestration.communication_bus import CommunicationBus, Message
-from src.mcp import MCPClient, MCPServer, MCPTool
+from src.mcp_client import MCPClient
 from src.llm import LLMClient
 
 
@@ -139,57 +139,11 @@ class ExaSearchAgent(BaseAgent):
         
         # Set up the MCP client for Exa
         self.mcp_client = MCPClient()
+        self.exa_api_key = exa_api_key
+        self.exa_url = exa_url
         
-        # Define the Exa search tool
-        search_tool = MCPTool(
-            name="search",
-            description="Search the web using Exa",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    },
-                    "num_results": {
-                        "type": "integer",
-                        "description": "The number of results to return",
-                        "default": 10
-                    },
-                    "include_domains": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "Domains to include in the search"
-                    },
-                    "exclude_domains": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "Domains to exclude from the search"
-                    },
-                    "use_autoprompt": {
-                        "type": "boolean",
-                        "description": "Whether to use Exa's autoprompt feature",
-                        "default": True
-                    }
-                },
-                "required": ["query"]
-            }
-        )
-        
-        # Create the Exa server
-        exa_server = MCPServer(
-            name="exa",
-            url=exa_url,
-            api_key=exa_api_key,
-            tools=[search_tool]
-        )
-        
-        # Add the server to the MCP client
-        self.mcp_client.add_server(exa_server)
+        # Store capabilities for testing
+        self.capabilities = ["search", "web_search", "exa_search"]
         
         # Register message handlers
         self.register_message_handler("search.request", self.handle_search_request)
@@ -239,8 +193,9 @@ class ExaSearchAgent(BaseAgent):
             # Call the Exa search tool
             result = await self.mcp_client.call_tool(
                 server_name="exa",
-                tool_name="search",
-                parameters={
+                server_script="npx exa-mcp-server",
+                tool_name="web_search_exa",
+                arguments={
                     "query": query,
                     "num_results": num_results,
                     "include_domains": include_domains,
@@ -306,3 +261,26 @@ class ExaSearchAgent(BaseAgent):
         else:
             # For other messages, let the base agent handle them
             await super().handle_message(message)
+    
+    async def process_message(self, message: Message):
+        """
+        Process a message from another agent.
+        
+        Args:
+            message: The message to process.
+        """
+        await self.handle_message(message)
+    
+    async def handle_request(self, request: Dict[str, Any]):
+        """
+        Handle a direct request to this agent.
+        
+        Args:
+            request: The request to handle.
+        """
+        # For now, just return the agent capabilities
+        return {
+            "agent_id": self.agent_card.agent_id,
+            "capabilities": self.capabilities,
+            "status": "ready"
+        }

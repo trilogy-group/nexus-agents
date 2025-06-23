@@ -1,8 +1,8 @@
 {
     "reasoning_model": {
         "provider": "openai",
-        "model_name": "gpt-4-turbo",
-        "max_tokens": 4096,
+        "model_name": "o3",
+        "max_tokens": 32768,
         "temperature": 0.7,
         "top_p": 1.0,
         "additional_params": {
@@ -12,8 +12,8 @@
     },
     "task_model": {
         "provider": "openai",
-        "model_name": "gpt-3.5-turbo",
-        "max_tokens": 2048,
+        "model_name": "gpt-4o",
+        "max_tokens": 16384,
         "temperature": 0.5,
         "top_p": 1.0,
         "additional_params": {

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from src.agents.base_agent import BaseAgent, A2AAgentCard
 from src.orchestration.communication_bus import CommunicationBus, Message
-from src.mcp import MCPClient, MCPServer, MCPTool
+from src.mcp_client import RemoteMCPSession, MCPClient
 from src.llm import LLMClient
 
 
@@ -119,38 +119,12 @@ class LinkUpSearchAgent(BaseAgent):
         
         # Set up the MCP client for LinkUp
         self.mcp_client = MCPClient()
+        self.linkup_url = "https://mcp.linkup.so/sse"  # Correct working URL
+        self.linkup_api_key = linkup_api_key
+        self.mcp_session = None  # Will be initialized when needed
         
-        # Define the LinkUp search tool
-        search_tool = MCPTool(
-            name="search",
-            description="Search the web using LinkUp",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "The maximum number of results to return",
-                        "default": 10
-                    }
-                },
-                "required": ["query"]
-            }
-        )
-        
-        # Create the LinkUp server
-        linkup_server = MCPServer(
-            name="linkup",
-            url=linkup_url,
-            api_key=linkup_api_key,
-            tools=[search_tool]
-        )
-        
-        # Add the server to the MCP client
-        self.mcp_client.add_server(linkup_server)
+        # Store capabilities for testing
+        self.capabilities = ["search", "web_search", "linkup_search"]
         
         # Register message handlers
         self.register_message_handler("search.request", self.handle_search_request)
@@ -160,12 +134,14 @@ class LinkUpSearchAgent(BaseAgent):
         await super().start()
         
         # Connect to the MCP client
-        await self.mcp_client.connect()
+        self.mcp_session = RemoteMCPSession(self.linkup_url, self.linkup_api_key)
+        await self.mcp_session.connect()
     
     async def stop(self):
         """Stop the agent."""
         # Disconnect from the MCP client
-        await self.mcp_client.disconnect()
+        if self.mcp_session:
+            await self.mcp_session.disconnect()
         
         await super().stop()
     
@@ -194,13 +170,14 @@ class LinkUpSearchAgent(BaseAgent):
             return
         
         try:
-            # Call the LinkUp search tool
+            # Call the LinkUp search tool (use correct tool name)
             result = await self.mcp_client.call_tool(
                 server_name="linkup",
-                tool_name="search",
-                parameters={
+                server_script="python -m mcp_search_linkup",
+                tool_name="search-web",
+                arguments={
                     "query": query,
-                    "max_results": max_results
+                    "depth": "standard"  # Use correct parameter name for Linkup
                 }
             )
             
@@ -261,3 +238,26 @@ class LinkUpSearchAgent(BaseAgent):
         else:
             # For other messages, let the base agent handle them
             await super().handle_message(message)
+    
+    async def process_message(self, message: Message):
+        """
+        Process a message from another agent.
+        
+        Args:
+            message: The message to process.
+        """
+        await self.handle_message(message)
+    
+    async def handle_request(self, request: Dict[str, Any]):
+        """
+        Handle a direct request to this agent.
+        
+        Args:
+            request: The request to handle.
+        """
+        # For now, just return the agent capabilities
+        return {
+            "agent_id": self.agent_card.agent_id,
+            "capabilities": getattr(self, 'capabilities', []),
+            "status": "ready"
+        }

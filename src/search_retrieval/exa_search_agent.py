@@ -7,13 +7,13 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from ..orchestration.communication_bus import CommunicationBus
-from ..mcp_client_simple import SimpleMCPClient
+from ..mcp_client import MCPSearchClient
 
 
 class ExaSearchAgent:
     """Agent for searching using Exa API via MCP."""
     
-    def __init__(self, communication_bus: CommunicationBus, mcp_client: SimpleMCPClient):
+    def __init__(self, communication_bus: CommunicationBus, mcp_client: MCPSearchClient):
         self.communication_bus = communication_bus
         self.mcp_client = mcp_client
         self.agent_id = f"exa_search_{uuid.uuid4().hex[:8]}"

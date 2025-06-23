@@ -201,3 +201,19 @@ dump.rdb
 
 # MongoDB data
 data/
+
+# External MCP Servers (managed by setup script)
+external_mcp_servers/*/
+
+# External MCP Server Virtual Environments
+external_mcp_servers/*/.venv/
+external_mcp_servers/*/.venv*
+external_mcp_servers/*/venv/
+external_mcp_servers/*/venv*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

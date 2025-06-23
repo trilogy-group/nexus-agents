@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from src.agents.base_agent import BaseAgent, A2AAgentCard
 from src.orchestration.communication_bus import CommunicationBus, Message
-from src.mcp import MCPClient, MCPServer, MCPTool
+from src.mcp_client import MCPClient
 from src.llm import LLMClient
 
 
@@ -128,59 +128,11 @@ class FirecrawlSearchAgent(BaseAgent):
         
         # Set up the MCP client for Firecrawl
         self.mcp_client = MCPClient()
+        self.firecrawl_api_key = firecrawl_api_key
+        self.firecrawl_url = firecrawl_url
         
-        # Define the Firecrawl search tool
-        search_tool = MCPTool(
-            name="search",
-            description="Search the web using Firecrawl",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    }
-                },
-                "required": ["query"]
-            }
-        )
-        
-        # Define the Firecrawl crawl tool
-        crawl_tool = MCPTool(
-            name="crawl",
-            description="Crawl a website using Firecrawl",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "The URL to crawl"
-                    },
-                    "depth": {
-                        "type": "integer",
-                        "description": "The depth of the crawl",
-                        "default": 1
-                    },
-                    "max_pages": {
-                        "type": "integer",
-                        "description": "The maximum number of pages to crawl",
-                        "default": 10
-                    }
-                },
-                "required": ["url"]
-            }
-        )
-        
-        # Create the Firecrawl server
-        firecrawl_server = MCPServer(
-            name="firecrawl",
-            url=firecrawl_url,
-            api_key=firecrawl_api_key,
-            tools=[search_tool, crawl_tool]
-        )
-        
-        # Add the server to the MCP client
-        self.mcp_client.add_server(firecrawl_server)
+        # Store capabilities for testing
+        self.capabilities = ["search", "web_search", "firecrawl_search", "web_crawling"]
         
         # Register message handlers
         self.register_message_handler("search.request", self.handle_search_request)
@@ -227,8 +179,9 @@ class FirecrawlSearchAgent(BaseAgent):
             # Call the Firecrawl search tool
             result = await self.mcp_client.call_tool(
                 server_name="firecrawl",
+                server_script="npx -y firecrawl-mcp",
                 tool_name="search",
-                parameters={
+                arguments={
                     "query": query
                 }
             )
@@ -285,8 +238,9 @@ class FirecrawlSearchAgent(BaseAgent):
             # Call the Firecrawl crawl tool
             result = await self.mcp_client.call_tool(
                 server_name="firecrawl",
+                server_script="npx -y firecrawl-mcp",
                 tool_name="crawl",
-                parameters={
+                arguments={
                     "url": url,
                     "depth": depth,
                     "max_pages": max_pages
@@ -352,3 +306,26 @@ class FirecrawlSearchAgent(BaseAgent):
         else:
             # For other messages, let the base agent handle them
             await super().handle_message(message)
+    
+    async def process_message(self, message: Message):
+        """
+        Process a message from another agent.
+        
+        Args:
+            message: The message to process.
+        """
+        await self.handle_message(message)
+    
+    async def handle_request(self, request: Dict[str, Any]):
+        """
+        Handle a direct request to this agent.
+        
+        Args:
+            request: The request to handle.
+        """
+        # For now, just return the agent capabilities
+        return {
+            "agent_id": self.agent_card.agent_id,
+            "capabilities": self.capabilities,
+            "status": "ready"
+        }

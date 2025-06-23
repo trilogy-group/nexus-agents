@@ -58,34 +58,62 @@ cd nexus-agents
 
 2. **Install Python dependencies**:
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
-3. **Install MCP servers**:
+3. **Set up MCP servers and environment**:
 ```bash
-# Install Node.js-based MCP servers
-cd external_mcp_servers
-
-# Exa MCP server
-cd exa-mcp && npm install && npm run build && cd ..
-
-# Perplexity MCP server
-cd perplexity-official-mcp/perplexity-ask && npm install && npm run build && cd ../..
-
-# Firecrawl MCP server
-cd firecrawl-mcp && npm install && npm run build && cd ..
-
-# Install Python-based Linkup MCP server
-pip install linkup-sdk
+# Run the automated setup script
+bash scripts/setup_mcp_servers.sh
 ```
 
-4. **Configure environment variables**:
+4. **Configure API keys**:
 ```bash
 cp .env.example .env
-# Edit .env with your API keys
+# Edit .env with your API keys for the MCP servers you want to use:
+# - FIRECRAWL_API_KEY
+# - EXA_API_KEY  
+# - PERPLEXITY_API_KEY
+# - LINKUP_API_KEY
+```
+
+5. **Validate setup**:
+```bash
+uv run python scripts/validate_mcp_setup.py
 ```
 
 ## 🔧 Configuration
+
+### ⚠️ API Key Security - Important Notice
+
+**API keys are NEVER stored in configuration files!** The `config/mcp_config.json` file contains empty placeholder values (`""`) for API keys that are completely ignored by the system.
+
+```json
+// ❌ DO NOT PUT REAL API KEYS HERE!
+"env": {
+  "FIRECRAWL_API_KEY": "",  // ← This empty string is ignored
+  "EXA_API_KEY": ""         // ← Only environment variable names matter
+}
+```
+
+**✅ ALWAYS export API keys as environment variables:**
+```bash
+export FIRECRAWL_API_KEY=your_actual_firecrawl_key
+export EXA_API_KEY=your_actual_exa_key
+export PERPLEXITY_API_KEY=your_actual_perplexity_key
+export LINKUP_API_KEY=your_actual_linkup_key
+```
+
+The configuration file only tells the system **which environment variable names to look for** - it never reads the placeholder values.
+
+### MCP Server Configuration
+
+The system uses official Model Context Protocol (MCP) servers. Configuration is managed through `config/mcp_config.json`:
+
+- **Firecrawl**: Web scraping and crawling (`uv run firecrawl-mcp`)
+- **Exa**: Web search (`uv run exa-mcp-server`)  
+- **Perplexity**: AI-powered search (`uv run mcp-server-perplexity-ask`)
+- **Linkup**: Web search (`uv run python -m mcp_search_linkup`)
 
 ### Environment Variables
 
@@ -171,22 +199,138 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+## 🔍 Live Search Workflow with Real API Keys
+
+To test and use the system with actual search capabilities, set up your API keys:
+
+### Step 1: Configure API Keys
+
+```bash
+# Set your real API keys for MCP servers
+export FIRECRAWL_API_KEY="fc-your_actual_firecrawl_key"
+export EXA_API_KEY="your_actual_exa_key"
+export PERPLEXITY_API_KEY="pplx-your_actual_perplexity_key"
+export LINKUP_API_KEY="your_actual_linkup_key"
+export OPENAI_API_KEY="sk-your_actual_openai_key"
 ```
 
-### Testing
+### Step 2: Run Live Search Tests
+
+```bash
+# Test live search functionality with real API calls
+uv run python test_live_search_workflow.py
+```
+
+### Step 3: Use Live Search in Code
+
+```python
+import asyncio
+from src.mcp_client import MCPClient
+
+async def live_search_example():
+    """Example of using live search capabilities."""
+    
+    # Initialize MCP client
+    mcp_client = MCPClient()
+    
+    # Example 1: Web scraping with Firecrawl
+    print("🔥 Scraping web page...")
+    result = await mcp_client.scrape_url("https://example.com")
+    print(f"Scraped content: {result}")
+    
+    # Example 2: Web search with Firecrawl
+    print("🔍 Searching the web...")
+    search_result = await mcp_client.search_web("AI latest news 2024", "firecrawl")
+    print(f"Search results: {search_result}")
+    
+    # Example 3: Research search with Exa
+    print("📚 Research search...")
+    research_result = await mcp_client.search_web("machine learning papers", "exa")
+    print(f"Research results: {research_result}")
+
+if __name__ == "__main__":
+    asyncio.run(live_search_example())
+
+### Step 4: Full Research Workflow
+
+```python
+import asyncio
+from src.llm.client import LLMClient
+from src.communication.bus import CommunicationBus
+from src.agents.nexus import NexusAgents
+from src.search.providers_config import SearchProvidersConfig
+
+async def real_research_workflow():
+    """Complete research workflow with live API calls."""
+    
+    # Initialize system with real API access
+    llm_client = LLMClient()
+    communication_bus = CommunicationBus()
+    search_config = SearchProvidersConfig()
+    
+    nexus = NexusAgents(
+        llm_client=llm_client,
+        communication_bus=communication_bus,
+        search_providers_config=search_config,
+        duckdb_path="./data/nexus.db",
+        storage_path="./data/storage"
+    )
+    
+    await nexus.start()
+    
+    # Perform live research with multiple sources
+    research_topics = [
+        "renewable energy trends 2024",
+        "artificial intelligence breakthroughs",
+        "quantum computing applications"
+    ]
+    
+    for topic in research_topics:
+        print(f"\n🔍 Researching: {topic}")
+        
+        # Use MCP servers for diverse search results
+        firecrawl_results = await nexus.mcp_client.search_web(topic, "firecrawl")
+        exa_results = await nexus.mcp_client.search_web(topic, "exa")
+        
+        print(f"✅ Found {len(firecrawl_results)} Firecrawl results")
+        print(f"✅ Found {len(exa_results)} Exa results")
+        
+        # Process and analyze results with LLM
+        # (Implementation depends on your specific research needs)
+
+if __name__ == "__main__":
+    asyncio.run(real_research_workflow())
+
+## 🔧 Testing
 
 Run the test suite to verify installation:
 
 ```bash
 # Test system initialization
-python test_system_initialization.py
+uv run python test_system_initialization.py
 
-# Test research workflow
-python test_research_workflow.py
+# Test live search functionality with real API calls
+# (Requires API keys to be set in environment)
+uv run python test_live_search_workflow.py
+
+# Test research workflow (basic components)
+uv run python test_research_workflow.py
+
+# Test MCP server integration
+uv run python test_official_mcp_integration.py
 
 # Test individual components
-python -m pytest tests/
+uv run python -m pytest tests/
 ```
+
+### Test Levels
+
+1. **Basic Tests** - System initialization and component setup (no API keys required)
+2. **Integration Tests** - MCP server handshakes and tool discovery (dummy keys work)
+3. **Live Tests** - Real search operations and scraping (requires valid API keys)
+
+⚠️ **Note**: Live tests require actual API keys. Set them in your environment or they will be skipped.
 
 ## 🔍 MCP Integration
 
@@ -195,19 +339,19 @@ The system uses proper Model Context Protocol (MCP) implementation with official
 ### Available MCP Servers
 
 1. **Linkup MCP Server** (Python-based)
-   - Command: `mcp-search-linkup`
+   - Command: `uv run python -m mcp_search_linkup`
    - Purpose: Web search capabilities
 
 2. **Exa MCP Server** (Node.js-based)
-   - Command: `node external_mcp_servers/exa-mcp/.smithery/index.cjs`
+   - Command: `uv run node external_mcp_servers/exa-mcp/.smithery/index.cjs`
    - Purpose: Semantic search
 
 3. **Perplexity MCP Server** (Node.js-based, Official)
-   - Command: `node external_mcp_servers/perplexity-official-mcp/perplexity-ask/dist/index.js`
+   - Command: `uv run node external_mcp_servers/perplexity-official-mcp/perplexity-ask/dist/index.js`
    - Purpose: AI-powered search
 
 4. **Firecrawl MCP Server** (Node.js-based)
-   - Command: `node external_mcp_servers/firecrawl-mcp/dist/index.js`
+   - Command: `uv run node external_mcp_servers/firecrawl-mcp/dist/index.js`
    - Purpose: Web scraping and content extraction
 
 ### MCP Client Implementation

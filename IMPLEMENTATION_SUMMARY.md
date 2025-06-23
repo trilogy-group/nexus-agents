@@ -6,31 +6,31 @@ Successfully implemented the Nexus Agents multi-agent deep research system based
 
 ## Key Achievements
 
-### 1. Multi-Agent Architecture ✅
+### 1. Multi-Agent Architecture 
 - **Agent-to-Agent Communication**: Implemented Redis-based pub-sub messaging system
 - **Specialized Agents**: Created dedicated agents for each search provider (Linkup, Exa, Perplexity, Firecrawl)
 - **Research Agents**: Topic decomposition and research planning agents
 - **Summarization Agents**: Data summarization and higher-order reasoning agents
 
-### 2. LLM Client with Multi-Provider Support ✅
+### 2. LLM Client with Multi-Provider Support 
 - **Providers Supported**: OpenAI, Anthropic, Google, xAI, OpenRouter, Ollama
 - **Two-Model Configuration**: Reasoning model (powerful) + Task model (lightweight)
 - **Robust Error Handling**: Comprehensive error handling and fallback mechanisms
 - **Configuration Management**: JSON-based configuration with environment variable support
 
-### 3. Database Migration to DuckDB ✅
+### 3. Database Migration to DuckDB 
 - **Replaced MongoDB**: Migrated to DuckDB for better JSON support and embedded deployment
 - **File Storage**: Binary files stored on filesystem with metadata in database
 - **Native JSON Support**: Leverages DuckDB's excellent JSON capabilities
 - **Search & Caching**: Full-text search and result caching with expiration
 - **Performance**: Optimized for analytical queries on research data
 
-### 4. MCP Integration ✅
+### 4. MCP Integration 
 - **Tool Use Protocol**: Implemented MCP client for external tool integration
 - **Search Provider Integration**: Each search provider has dedicated MCP integration
 - **Extensible Design**: Easy to add new tools and providers
 
-### 5. Complete System Architecture ✅
+### 5. Complete System Architecture 
 - **Orchestration Layer**: Task manager, communication bus, agent spawner
 - **Research Planning**: Topic decomposition and planning modules
 - **Search & Retrieval**: Parallel search across multiple providers
@@ -169,17 +169,17 @@ cp .env.example .env
 docker run -d -p 6379:6379 redis
 
 # Run the system
-python example.py
+uv run python example.py
 ```
 
 ## Testing
 
-- ✅ DuckDB knowledge base functionality
-- ✅ LLM client multi-provider support
-- ✅ Agent communication system
-- ✅ File storage and retrieval
-- ✅ Search result caching
-- ✅ System startup and initialization
+- DuckDB knowledge base functionality
+- LLM client multi-provider support
+- Agent communication system
+- File storage and retrieval
+- Search result caching
+- System startup and initialization
 
 ## Next Steps
 
