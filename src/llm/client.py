@@ -164,9 +164,17 @@ class LLMClient:
             import openai
             
             # Get API key from config or environment
-            api_key = (self.reasoning_config.api_key if self.reasoning_config.provider == LLMProvider.OPENAI else
-                      self.task_config.api_key if self.task_config.provider == LLMProvider.OPENAI else
-                      os.environ.get("OPENAI_API_KEY"))
+            api_key = None
+            
+            # Try reasoning config first
+            if self.reasoning_config and self.reasoning_config.provider == LLMProvider.OPENAI and self.reasoning_config.api_key:
+                api_key = self.reasoning_config.api_key
+            # Try task config next
+            elif self.task_config and self.task_config.provider == LLMProvider.OPENAI and self.task_config.api_key:
+                api_key = self.task_config.api_key
+            # Fall back to environment variable
+            if not api_key:
+                api_key = os.environ.get("OPENAI_API_KEY")
             
             # Get API base from config or use default
             api_base = (self.reasoning_config.api_base if self.reasoning_config.provider == LLMProvider.OPENAI else
@@ -194,9 +202,17 @@ class LLMClient:
             import anthropic
             
             # Get API key from config or environment
-            api_key = (self.reasoning_config.api_key if self.reasoning_config.provider == LLMProvider.ANTHROPIC else
-                      self.task_config.api_key if self.task_config.provider == LLMProvider.ANTHROPIC else
-                      os.environ.get("ANTHROPIC_API_KEY"))
+            api_key = None
+            
+            # Try reasoning config first
+            if self.reasoning_config and self.reasoning_config.provider == LLMProvider.ANTHROPIC and self.reasoning_config.api_key:
+                api_key = self.reasoning_config.api_key
+            # Try task config next
+            elif self.task_config and self.task_config.provider == LLMProvider.ANTHROPIC and self.task_config.api_key:
+                api_key = self.task_config.api_key
+            # Fall back to environment variable
+            if not api_key:
+                api_key = os.environ.get("ANTHROPIC_API_KEY")
             
             # Get API base from config or use default
             api_base = (self.reasoning_config.api_base if self.reasoning_config.provider == LLMProvider.ANTHROPIC else
@@ -224,9 +240,17 @@ class LLMClient:
             import google.generativeai as genai
             
             # Get API key from config or environment
-            api_key = (self.reasoning_config.api_key if self.reasoning_config.provider == LLMProvider.GOOGLE else
-                      self.task_config.api_key if self.task_config.provider == LLMProvider.GOOGLE else
-                      os.environ.get("GOOGLE_API_KEY"))
+            api_key = None
+            
+            # Try reasoning config first
+            if self.reasoning_config and self.reasoning_config.provider == LLMProvider.GOOGLE and self.reasoning_config.api_key:
+                api_key = self.reasoning_config.api_key
+            # Try task config next
+            elif self.task_config and self.task_config.provider == LLMProvider.GOOGLE and self.task_config.api_key:
+                api_key = self.task_config.api_key
+            # Fall back to environment variable
+            if not api_key:
+                api_key = os.environ.get("GOOGLE_API_KEY")
             
             if not api_key:
                 logger.error("Google API key not found")
@@ -246,9 +270,17 @@ class LLMClient:
             import openai
             
             # Get API key from config or environment
-            api_key = (self.reasoning_config.api_key if self.reasoning_config.provider == LLMProvider.XAI else
-                      self.task_config.api_key if self.task_config.provider == LLMProvider.XAI else
-                      os.environ.get("XAI_API_KEY"))
+            api_key = None
+            
+            # Try reasoning config first
+            if self.reasoning_config and self.reasoning_config.provider == LLMProvider.XAI and self.reasoning_config.api_key:
+                api_key = self.reasoning_config.api_key
+            # Try task config next
+            elif self.task_config and self.task_config.provider == LLMProvider.XAI and self.task_config.api_key:
+                api_key = self.task_config.api_key
+            # Fall back to environment variable
+            if not api_key:
+                api_key = os.environ.get("XAI_API_KEY")
             
             # Get API base from config or use default
             api_base = (self.reasoning_config.api_base if self.reasoning_config.provider == LLMProvider.XAI else
@@ -273,9 +305,17 @@ class LLMClient:
             import openai
             
             # Get API key from config or environment
-            api_key = (self.reasoning_config.api_key if self.reasoning_config.provider == LLMProvider.OPENROUTER else
-                      self.task_config.api_key if self.task_config.provider == LLMProvider.OPENROUTER else
-                      os.environ.get("OPENROUTER_API_KEY"))
+            api_key = None
+            
+            # Try reasoning config first
+            if self.reasoning_config and self.reasoning_config.provider == LLMProvider.OPENROUTER and self.reasoning_config.api_key:
+                api_key = self.reasoning_config.api_key
+            # Try task config next
+            elif self.task_config and self.task_config.provider == LLMProvider.OPENROUTER and self.task_config.api_key:
+                api_key = self.task_config.api_key
+            # Fall back to environment variable
+            if not api_key:
+                api_key = os.environ.get("OPENROUTER_API_KEY")
             
             if not api_key:
                 logger.error("OpenRouter API key not found")

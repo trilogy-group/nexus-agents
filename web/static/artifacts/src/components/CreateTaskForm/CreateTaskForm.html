@@ -1,0 +1,30 @@
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Create Research Task</h5>
+            </div>
+            <div class="card-body">
+                <form id="create-task-form">
+                    <div class="mb-3">
+                        <label for="title" class="form-label">Title</label>
+                        <input type="text" class="form-control" id="title" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea class="form-control" id="description" rows="3" required></textarea>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="continuous-mode">
+                        <label class="form-check-label" for="continuous-mode">Continuous Mode</label>
+                    </div>
+                    <div class="mb-3" id="interval-container" style="display: none;">
+                        <label for="interval" class="form-label">Update Interval (hours)</label>
+                        <input type="number" class="form-control" id="interval" value="24" min="1">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Create Task</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>

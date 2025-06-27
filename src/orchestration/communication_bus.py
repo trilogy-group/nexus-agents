@@ -60,6 +60,39 @@ class CommunicationBus:
         if self.redis_client:
             await self.redis_client.close()
     
+    async def publish_message(self, message: Any = None, **kwargs):
+        """Publish a message to a topic.
+
+        Supports three calling patterns for backward-compatibility:
+        1. publish_message(Message(...))
+        2. publish_message({...}) – dict with required message fields
+        3. publish_message(sender="foo", topic="bar", content={...}, ...)
+        """
+        # Accept keyword-only construction
+        if message is None:
+            if not kwargs:
+                raise ValueError("publish_message requires a Message/dict or keyword fields")
+            candidate = kwargs
+        else:
+            # Merge positional and keyword overrides if both supplied
+            if kwargs:
+                if isinstance(message, Message):
+                    candidate = {**message.model_dump(), **kwargs}
+                elif isinstance(message, dict):
+                    candidate = {**message, **kwargs}
+                else:
+                    raise ValueError("Unsupported message type with additional kwargs")
+            else:
+                candidate = message
+
+        # Ensure we have a Message instance
+        if isinstance(candidate, Message):
+            msg_obj = candidate
+        else:
+            msg_obj = Message.model_validate(candidate)
+
+        await self.publish(msg_obj)
+    
     async def publish(self, message: Message):
         """Publish a message to a topic."""
         if not self.redis_client:
@@ -68,6 +101,29 @@ class CommunicationBus:
         message_json = message.model_dump_json()
         await self.redis_client.publish(message.topic, message_json)
     
+    async def wait_for_message(self, *, topic: str, conversation_id: Optional[str] = None, reply_to: Optional[str] = None, timeout: int = 30) -> Message:
+        """Wait for a single message matching the criteria.
+
+        This is a lightweight helper primarily for synchronous request/response flows.
+        """
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[Message] = loop.create_future()
+
+        async def _tmp_callback(msg: Message):
+            if conversation_id and msg.conversation_id != conversation_id:
+                return
+            if reply_to and msg.reply_to != reply_to:
+                return
+            if not future.done():
+                future.set_result(msg)
+
+        # Subscribe and wait
+        await self.subscribe(topic, _tmp_callback)
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            await self.unsubscribe(topic, _tmp_callback)
+
     async def subscribe(self, topic: str, callback: Callable[[Message], None]):
         """Subscribe to a topic."""
         if not self.redis_client:

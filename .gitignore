@@ -217,3 +217,10 @@ external_mcp_servers/*/venv*
 *.swp
 *.swo
 *~
+.DS_Store
+
+# MCP external servers (managed by setup script)
+external_mcp_servers/*/
+
+# Development files
+.dev_pids

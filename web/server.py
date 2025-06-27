@@ -21,7 +21,7 @@ app.add_middleware(
 )
 
 # Mount the static files
-app.mount("/", StaticFiles(directory="web/static", html=True), name="static")
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 
 def main():

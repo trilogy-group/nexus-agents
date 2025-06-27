@@ -6,15 +6,21 @@ import argparse
 import json
 import os
 import uuid
+from datetime import datetime
 from typing import Dict, List, Optional
 
+import redis.asyncio as redis
 import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from main import NexusAgents
+from src.persistence.knowledge_base import KnowledgeBase
+from src.orchestration.task_manager import TaskStatus
 
+# Load environment variables
+load_dotenv(override=True)
 
 # Create the FastAPI app
 app = FastAPI(title="Nexus Agents API", description="API for the Nexus Agents system")
@@ -28,8 +34,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create the Nexus Agents system
-nexus = None
+# Global instances
+redis_client: Optional[redis.Redis] = None
+task_queue_key = "nexus:task_queue"
 
 
 # Define the API models
@@ -54,48 +61,85 @@ class ResearchTaskStatus(BaseModel):
     artifacts: List[Dict]
 
 
+from contextlib import asynccontextmanager
+
+# Helper context manager to get a short-lived KnowledgeBase connection
+@asynccontextmanager
+async def get_kb(read_only: bool = True):
+    duckdb_path = os.environ.get("DUCKDB_PATH", "data/nexus_agents.db")
+    storage_path = os.environ.get("STORAGE_PATH", "data/storage")
+    kb = KnowledgeBase(db_path=duckdb_path, storage_path=storage_path, read_only=read_only)
+    await kb.connect()
+    try:
+        yield kb
+    finally:
+        await kb.disconnect()
+
+
 @app.on_event("startup")
 async def startup_event():
-    """Start the Nexus Agents system."""
-    global nexus
-    
+    """Initialize connections and systems on startup."""
+    global redis_client
     # Get configuration from environment variables
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     duckdb_path = os.environ.get("DUCKDB_PATH", "data/nexus_agents.db")
     storage_path = os.environ.get("STORAGE_PATH", "data/storage")
-    output_dir = os.environ.get("OUTPUT_DIR", "output")
-    llm_config_path = os.environ.get("LLM_CONFIG", "config/llm_config.json")
     
-    nexus = NexusAgents(
-        redis_url=redis_url,
-        duckdb_path=duckdb_path,
-        storage_path=storage_path,
-        output_dir=output_dir,
-        llm_config_path=llm_config_path
-    )
-    await nexus.start()
+    # Initialize Redis connection
+    redis_client = redis.Redis.from_url(redis_url)
+    try:
+        await redis_client.ping()
+        print(f"Connected to Redis at {redis_url}")
+    except Exception as e:
+        print(f"Failed to connect to Redis: {e}")
+        raise
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Stop the Nexus Agents system."""
-    global nexus
-    if nexus:
-        await nexus.stop()
+    """Clean up connections on shutdown."""
+    global redis_client
+    if redis_client:
+        await redis_client.close()
+
+
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {"message": "Nexus Agents API", "status": "running"}
 
 
 @app.post("/tasks", response_model=Dict[str, str])
 async def create_task(task: ResearchTaskCreate):
-    """Create a new research task."""
-    global nexus
-    if not nexus:
-        raise HTTPException(status_code=503, detail="Nexus Agents system not started")
+    """Create a new research task and enqueue it for processing."""
+    global redis_client
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="System not initialized")
     
-    task_id = await nexus.create_research_task(
-        title=task.title,
-        description=task.description,
-        continuous_mode=task.continuous_mode,
-        continuous_interval_hours=task.continuous_interval_hours
+    # Generate task ID
+    task_id = str(uuid.uuid4())
+    
+    # Prepare task for queue
+    task_data = {
+        "task_id": task_id,
+        "title": task.title,
+        "description": task.description,
+        "continuous_mode": task.continuous_mode,
+        "continuous_interval_hours": task.continuous_interval_hours,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    # Enqueue task for processing
+    await redis_client.rpush(task_queue_key, json.dumps(task_data))
+    
+    # Publish task creation event
+    await redis_client.publish(
+        f"nexus:task_created",
+        json.dumps({
+            "task_id": task_id,
+            "title": task.title,
+            "timestamp": datetime.utcnow().isoformat()
+        })
     )
     
     return {"task_id": task_id}
@@ -103,16 +147,87 @@ async def create_task(task: ResearchTaskCreate):
 
 @app.get("/tasks/{task_id}", response_model=ResearchTaskStatus)
 async def get_task_status(task_id: str):
-    """Get the status of a research task."""
-    global nexus
-    if not nexus:
-        raise HTTPException(status_code=503, detail="Nexus Agents system not started")
-    
+    """Return the task status and artifacts."""
+    async with get_kb(read_only=True) as kb:
+        task = await kb.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        artifacts = await kb.get_task_artifacts(task_id)
+
+    formatted_artifacts = [
+        {
+            "type": a["format"],
+            "name": a["title"],
+            "path": a["file_path"] or f"/artifacts/{a['artifact_id']}",
+            "size": a["size_bytes"] or 0,
+            "created_at": a["created_at"],
+        }
+        for a in artifacts
+    ]
+
+    created_at = task["created_at"]
+    updated_at = task.get("updated_at")
+    if not isinstance(created_at, str):
+        created_at = created_at.isoformat()
+    if updated_at and not isinstance(updated_at, str):
+        updated_at = updated_at.isoformat()
+
+    return ResearchTaskStatus(
+        task_id=task["task_id"],
+        title=task["title"],
+        description=task.get("description") or task.get("query"),
+        status=task["status"],
+        continuous_mode=task.get("metadata", {}).get("continuous_mode", False),
+        continuous_interval_hours=task.get("metadata", {}).get("continuous_interval_hours"),
+        created_at=created_at,
+        updated_at=updated_at,
+        artifacts=formatted_artifacts,
+    )
+
+
+@app.get("/health")
+async def health_check():
+    """Simple health check."""
+    global redis_client
+
+    status = {"status": "healthy", "redis": "disconnected", "duckdb": "disconnected"}
+
+    # Redis connectivity
     try:
-        status = await nexus.get_task_status(task_id)
-        return status
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        if redis_client:
+            await redis_client.ping()
+            status["redis"] = "connected"
+    except Exception:
+        status["redis"] = "unhealthy"
+        status["status"] = "unhealthy"
+
+    # DuckDB connectivity (open short read-only session)
+    try:
+        async with get_kb(read_only=True) as kb:
+            kb.conn.execute("SELECT 1").fetchone()
+            status["duckdb"] = "connected"
+    except Exception:
+        status["duckdb"] = "unhealthy"
+        status["status"] = "unhealthy"
+
+    return status
+    # Check Redis connection
+    if redis_client:
+        try:
+            await redis_client.ping()
+            health_status["redis"] = "connected"
+        except:
+            health_status["status"] = "unhealthy"
+    
+    # Check DuckDB connection by opening a short-lived read-only session
+    try:
+        async with get_kb(read_only=True) as kb:
+            kb.conn.execute("SELECT 1").fetchone()
+            health_status["duckdb"] = "connected"
+    except:
+        pass
+    
+    return health_status
 
 
 def main():

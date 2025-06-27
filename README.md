@@ -46,7 +46,48 @@ The Nexus Agents system implements a hierarchical multi-agent architecture with 
 ### Prerequisites
 - Python 3.12+
 - Node.js 18+ (for MCP servers)
-- Redis (for agent communication)
+- Redis (for agent communication) or Docker
+
+### Quick Start with Development Environment
+
+The easiest way to get started is using our unified development startup script:
+
+```bash
+# Clone the repository
+git clone https://github.com/trilogy-group/nexus-agents.git
+cd nexus-agents
+
+# Install Python dependencies
+uv sync
+
+# Copy environment variables
+cp .env.example .env
+# Edit .env and add your API keys
+
+# Start all services (Redis, API, Web UI)
+./scripts/start_dev.sh
+
+# Access the services:
+# - Web UI: http://localhost:12001
+# - API Docs: http://localhost:12000/docs
+# - Redis: localhost:6379
+
+# Stop all services (keeps Redis running by default)
+./scripts/stop_dev.sh
+
+# Stop all services including Redis
+./scripts/stop_dev.sh --all
+```
+
+The startup script will:
+1. Start Redis (using Docker if available, otherwise local redis-server)
+2. Setup MCP servers if not already installed
+3. Validate MCP configuration and API keys
+4. Start the API backend on port 12000
+5. Start the Web UI on port 12001
+6. Follow logs in real-time
+
+### Manual Installation
 
 ### Setup
 

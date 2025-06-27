@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import shutil
+import os
 import time
 import uuid
 from datetime import datetime
@@ -22,10 +23,11 @@ class KnowledgeBase:
     It uses DuckDB for storing structured and JSON data, and the file system for binary files.
     """
     
-    def __init__(self, db_path: str = "data/nexus_agents.db", storage_path: str = "data/storage"):
+    def __init__(self, db_path: str = "data/nexus_agents.db", storage_path: str = "data/storage", read_only: bool = False):
         """Initialize the Knowledge Base."""
         self.db_path = db_path
         self.storage_path = Path(storage_path)
+        self.read_only = read_only
         self.conn: Optional[duckdb.DuckDBPyConnection] = None
         
         # Ensure directories exist
@@ -34,8 +36,9 @@ class KnowledgeBase:
     
     async def connect(self):
         """Connect to the database and initialize tables."""
-        self.conn = duckdb.connect(self.db_path)
-        await self._create_tables()
+        self.conn = duckdb.connect(self.db_path, read_only=self.read_only)
+        if not self.read_only:
+            await self._create_tables()
     
     async def disconnect(self):
         """Disconnect from the database."""
@@ -140,6 +143,70 @@ class KnowledgeBase:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_search_query ON search_results(query, provider)")
     
     # Research Tasks Methods
+
+    async def create_task(self, *, task_id: str, title: str, description: str, query: str = None, status: str = "pending", metadata: Dict[str, Any] = None) -> str:
+        """Convenience wrapper to create and store a new task.
+        This mirrors the signature used by the API layer and internally calls ``store_task``.
+        """
+        task: Dict[str, Any] = {
+            "task_id": task_id,
+            "title": title,
+            "description": description,
+            "query": query or description,
+            "status": status,
+            "metadata": metadata or {},
+        }
+        return await self.store_task(task)
+
+    async def get_task_artifacts(self, task_id: str) -> List[Dict[str, Any]]:
+        """Return all artifacts associated with a research task."""
+        results = self.conn.execute(
+            "SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at", [task_id]
+        ).fetchall()
+        artifacts: List[Dict[str, Any]] = []
+        for row in results:
+            artifact = dict(zip([desc[0] for desc in self.conn.description], row))
+            # Parse JSON fields
+            for field in ["metadata", "content"]:
+                if artifact.get(field):
+                    try:
+                        artifact[field] = json.loads(artifact[field])
+                    except Exception:
+                        pass
+            artifacts.append(artifact)
+        return artifacts
+
+    async def update_task(self, task_id: str, **fields):
+        """Generic helper to update arbitrary columns in ``research_tasks``.
+
+        JSON columns will be automatically converted from python objects to JSON
+        strings. ``completed_at`` should be a ``datetime``; it will be formatted
+        as ISO string.
+        """
+        if not fields:
+            return
+
+        # Convert JSON-able columns to JSON strings
+        json_cols = {"metadata", "decomposition", "plan", "results", "summary", "reasoning"}
+        params = []
+        assignments = []
+        for col, val in fields.items():
+            if col in json_cols and val is not None:
+                val = json.dumps(val)
+            elif col in {"created_at", "updated_at", "completed_at"} and hasattr(val, "isoformat"):
+                val = val.isoformat()
+            assignments.append(f"{col} = ?")
+            params.append(val)
+
+        # Always update updated_at unless explicitly provided
+        if "updated_at" not in fields:
+            assignments.append("updated_at = ?")
+            params.append(datetime.now().isoformat())
+
+        params.append(task_id)
+        sql = f"UPDATE research_tasks SET {', '.join(assignments)} WHERE task_id = ?"
+        self.conn.execute(sql, params)
+
     async def store_task(self, task: Dict[str, Any]) -> str:
         """
         Store a task in the knowledge base.

@@ -46,6 +46,19 @@ class MCPConfigLoader:
         """Get configuration for a specific server"""
         config = self.load_config()
         server_config = config.get(server_name)
+        # Only return enabled servers
+        if server_config and server_config.get('enabled', False):
+            return server_config
+        return None
+
+    def is_server_enabled(self, server_name: str) -> bool:
+        """Check if a server is enabled in the configuration."""
+        config = self.load_config()
+        server_config = config.get(server_name)
+        return bool(server_config and server_config.get('enabled', False))
+        """Get configuration for a specific server"""
+        config = self.load_config()
+        server_config = config.get(server_name)
         
         # Only return enabled servers
         if server_config and server_config.get('enabled', False):
