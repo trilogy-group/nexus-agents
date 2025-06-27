@@ -1,0 +1,227 @@
+{
+  "version": "1.0",
+  "artifacts": [
+    {
+      "id": "618c7807-d1f5-46e5-ab66-673608862be6",
+      "name": "docs/refactor_plan.md",
+      "artifact_type": "Documentation",
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/docs/refactor_plan.md",
+      "content": "# Frontend Refactoring Plan: Nexus Agents UI\n\nThis document outlines the refactoring of the monolithic `index.html` into a modern, component-based JavaScript application. This new structure improves maintainability, scalability, and separation of concerns.\n\n## Project Structure\n\nThe new frontend codebase is organized into two main directories: `public` and `src`.\n\n*   **`public/`**: Contains static assets that are served directly to the browser, such as the main `index.html` and CSS files.\n*   **`src/`**: Contains the JavaScript source code, organized by function into components and services.\n\n```\n.\n├── public/\n│   ├── css/\n│   │   └── style.css\n│   └── index.html\n└── src/\n    ├── components/\n    │   ├── CreateTaskForm.js\n    │   ├── TaskCard.js\n    │   └── TaskList.js\n    ├── services/\n    │   ├── api.js\n    │   └── state.js\n    └── main.js\n```\n\n---\n\n## File Contents\n\n### 1. `public/index.html`\n\nThis is the main HTML entry point. It has been stripped down to a basic shell. It includes the necessary meta tags, links to Bootstrap CSS and our local stylesheet, and a single `<div id=\"app\">` where the entire application will be dynamically rendered by JavaScript. The main script, `main.js`, is loaded as a module.\n\n```html\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Nexus Agents</title>\n    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css\" rel=\"stylesheet\">\n    <link rel=\"stylesheet\" href=\"css/style.css\">\n</head>\n<body>\n    <div id=\"app\" class=\"container\">\n        <!-- App content will be rendered here by JavaScript -->\n    </div>\n    <script type=\"module\" src=\"../src/main.js\"></script>\n</body>\n</html>\n```\n\n### 2. `public/css/style.css`\n\nThis file contains all the custom CSS styles that were previously in a `<style>` tag in the original `index.html`.\n\n```css\nbody {\n    padding-top: 2rem;\n    padding-bottom: 2rem;\n}\n.task-card {\n    margin-bottom: 1rem;\n}\n.task-status {\n    font-weight: bold;\n}\n.status-created { color: #6c757d; }\n.status-planning { color: #17a2b8; }\n.status-searching { color: #007bff; }\n.status-summarizing { color: #fd7e14; }\n.status-reasoning { color: #6f42c1; }\n.status-generating_artifacts { color: #e83e8c; }\n.status-completed { color: #28a745; }\n.status-failed { color: #dc3545; }\n```\n\n### 3. `src/services/api.js`\n\nThis service module abstracts all communication with the backend API. It centralizes API endpoints and fetch logic, making it easy to manage and update.\n\n```javascript\nconst API_URL = window.location.protocol + '//' + window.location.hostname + ':12000';\n\n/**\n * Creates a new task on the server.\n * @param {object} taskData - The data for the new task.\n * @returns {Promise<object>} The created task object.\n */\nexport async function createTask(taskData) {\n    const response = await fetch(`${API_URL}/tasks`, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify(taskData)\n    });\n    if (!response.ok) {\n        throw new Error(`HTTP error! status: ${response.status}`);\n    }\n    return response.json();\n}\n\n/**\n * Fetches a single task by its ID.\n * @param {string} taskId - The ID of the task to fetch.\n * @returns {Promise<object>} The task object.\n */\nexport async function getTask(taskId) {\n    const response = await fetch(`${API_URL}/tasks/${taskId}`);\n    if (!response.ok) {\n        // We don't throw here for a single task failure, so other tasks can still render.\n        // The caller will handle the non-ok response.\n        console.error(`Error fetching task ${taskId}: ${response.statusText}`);\n        return null;\n    }\n    return response.json();\n}\n```\n\n### 4. `src/services/state.js`\n\nThis module manages the application's state, specifically the list of task IDs. It handles loading from and saving to `localStorage`, providing a single source of truth for which tasks the client is tracking.\n\n```javascript\nconst STORAGE_KEY = 'nexus_task_ids';\nlet taskIds = [];\n\n/**\n * Loads task IDs from localStorage into memory.\n */\nfunction loadTaskIds() {\n    const storedTaskIds = localStorage.getItem(STORAGE_KEY);\n    if (storedTaskIds) {\n        taskIds = JSON.parse(storedTaskIds);\n    }\n}\n\n/**\n * Saves the current list of task IDs to localStorage.\n */\nfunction saveTaskIds() {\n    localStorage.setItem(STORAGE_KEY, JSON.stringify(taskIds));\n}\n\n/**\n * Gets the current list of task IDs.\n * @returns {string[]} An array of task IDs.\n */\nexport function getTaskIds() {\n    return [...taskIds];\n}\n\n/**\n * Adds a new task ID to the list and saves to localStorage.\n * @param {string} taskId - The new task ID to add.\n */\nexport function addTask(taskId) {\n    if (!taskIds.includes(taskId)) {\n        taskIds.push(taskId);\n        saveTaskIds();\n    }\n}\n\n// Initial load when the module is imported.\nloadTaskIds();\n```\n\n### 5. `src/components/CreateTaskForm.js`\n\nThis component is responsible for rendering the \"Create Research Task\" form and handling its submission logic. When a task is successfully created, it dispatches a custom `taskCreated` event to notify other parts of the application (like the `TaskList`) to update.\n\n```javascript\nimport { createTask } from '../services/api.js';\nimport { addTask } from '../services/state.js';\n\nconst formTemplate = `\n    <div class=\"card\">\n        <div class=\"card-header\">\n            <h5 class=\"card-title mb-0\">Create Research Task</h5>\n        </div>\n        <div class=\"card-body\">\n            <form id=\"create-task-form\">\n                <div class=\"mb-3\">\n                    <label for=\"title\" class=\"form-label\">Title</label>\n                    <input type=\"text\" class=\"form-control\" id=\"title\" required>\n                </div>\n                <div class=\"mb-3\">\n                    <label for=\"description\" class=\"form-label\">Description</label>\n                    <textarea class=\"form-control\" id=\"description\" rows=\"3\" required></textarea>\n                </div>\n                <div class=\"mb-3 form-check\">\n                    <input type=\"checkbox\" class=\"form-check-input\" id=\"continuous-mode\">\n                    <label class=\"form-check-label\" for=\"continuous-mode\">Continuous Mode</label>\n                </div>\n                <div class=\"mb-3\" id=\"interval-container\" style=\"display: none;\">\n                    <label for=\"interval\" class=\"form-label\">Update Interval (hours)</label>\n                    <input type=\"number\" class=\"form-control\" id=\"interval\" value=\"24\" min=\"1\">\n                </div>\n                <button type=\"submit\" class=\"btn btn-primary\">Create Task</button>\n            </form>\n        </div>\n    </div>\n`;\n\nexport function renderCreateTaskForm(container) {\n    container.innerHTML = formTemplate;\n\n    const form = container.querySelector('#create-task-form');\n    const continuousModeCheckbox = container.querySelector('#continuous-mode');\n    const intervalContainer = container.querySelector('#interval-container');\n\n    continuousModeCheckbox.addEventListener('change', function() {\n        intervalContainer.style.display = this.checked ? 'block' : 'none';\n    });\n\n    form.addEventListener('submit', async (event) => {\n        event.preventDefault();\n        \n        const title = container.querySelector('#title').value;\n        const description = container.querySelector('#description').value;\n        const continuousMode = continuousModeCheckbox.checked;\n        const interval = container.querySelector('#interval').value;\n\n        const data = {\n            title,\n            description,\n            continuous_mode: continuousMode,\n            continuous_interval_hours: continuousMode ? parseInt(interval) : null\n        };\n\n        try {\n            const result = await createTask(data);\n            addTask(result.task_id);\n            document.dispatchEvent(new CustomEvent('taskCreated', { detail: result }));\n            form.reset();\n            intervalContainer.style.display = 'none';\n        } catch (error) {\n            console.error('Error creating task:', error);\n            alert('Error creating task: ' + error.message);\n        }\n    });\n}\n```\n\n### 6. `src/components/TaskCard.js`\n\nA pure presentation component. It takes a task object and returns a DOM element representing the task card. This isolates the card's structure and makes it easy to modify.\n\n```javascript\nexport function createTaskCard(task) {\n    if (!task) {\n        return null;\n    }\n\n    const card = document.createElement('div');\n    card.className = 'card task-card';\n    \n    const artifactsHtml = (task.artifacts && task.artifacts.length > 0)\n        ? `<h6>Artifacts:</h6>\n           <ul>\n             ${task.artifacts.map(artifact => `\n               <li>\n                 <strong>${artifact.title}</strong> (${artifact.type})\n                 <br>\n                 <small>${artifact.filepath}</small>\n               </li>`).join('')}\n           </ul>`\n        : '';\n\n    card.innerHTML = `\n        <div class=\"card-header\">\n            <h5 class=\"card-title mb-0\">${task.title}</h5>\n        </div>\n        <div class=\"card-body\">\n            <p><strong>ID:</strong> ${task.task_id}</p>\n            <p><strong>Description:</strong> ${task.description}</p>\n            <p><strong>Status:</strong> <span class=\"task-status status-${task.status}\">${task.status}</span></p>\n            <p><strong>Continuous Mode:</strong> ${task.continuous_mode ? 'Yes' : 'No'}</p>\n            ${task.continuous_mode ? `<p><strong>Update Interval:</strong> ${task.continuous_interval_hours} hours</p>` : ''}\n            <p><strong>Created:</strong> ${new Date(task.created_at).toLocaleString() || 'N/A'}</p>\n            <p><strong>Updated:</strong> ${new Date(task.updated_at).toLocaleString() || 'N/A'}</p>\n            ${artifactsHtml}\n        </div>\n    `;\n    return card;\n}\n\nexport function createTaskErrorCard(taskId, error) {\n    const card = document.createElement('div');\n    card.className = 'card task-card';\n    card.innerHTML = `\n        <div class=\"card-header bg-danger text-white\">\n            <h5 class=\"card-title mb-0\">Error</h5>\n        </div>\n        <div class=\"card-body\">\n            <p>Error fetching task <strong>${taskId}</strong>: ${error.message}</p>\n        </div>\n    `;\n    return card;\n}\n```\n\n### 7. `src/components/TaskList.js`\n\nThis component manages the display of the list of tasks. It fetches task data, uses `TaskCard.js` to render each task, and handles the periodic refresh. It listens for the `taskCreated` event to update the list immediately when a new task is added.\n\n```javascript\nimport { getTaskIds } from '../services/state.js';\nimport { getTask } from '../services/api.js';\nimport { createTaskCard, createTaskErrorCard } from './TaskCard.js';\n\nlet tasksContainer;\n\nasync function refreshTasks() {\n    const taskIds = getTaskIds();\n    \n    if (!tasksContainer) return;\n\n    if (taskIds.length === 0) {\n        tasksContainer.innerHTML = '<p>No tasks yet. Create one above!</p>';\n        return;\n    }\n    \n    tasksContainer.innerHTML = ''; // Clear previous content\n    \n    const taskPromises = taskIds.map(id => getTask(id).catch(err => ({ error: err, taskId: id })));\n    \n    for (const taskPromise of taskPromises) {\n        try {\n            const task = await taskPromise;\n            let card;\n            if (task && !task.error) {\n                card = createTaskCard(task);\n            } else {\n                // Handle case where getTask returns null or an error object\n                const error = task ? task.error : new Error('Task not found or failed to load.');\n                const taskId = task ? task.taskId : 'Unknown ID';\n                card = createTaskErrorCard(taskId, error);\n            }\n            if (card) {\n                tasksContainer.appendChild(card);\n            }\n        } catch (error) {\n            console.error('Error processing task promise:', error);\n        }\n    }\n}\n\nexport function renderTaskList(container) {\n    container.innerHTML = `\n        <h2>Research Tasks</h2>\n        <div id=\"tasks-container\">\n            <p>Loading tasks...</p>\n        </div>\n    `;\n    tasksContainer = container.querySelector('#tasks-container');\n    \n    // Initial refresh\n    refreshTasks();\n    \n    // Refresh every 10 seconds\n    setInterval(refreshTasks, 10000);\n\n    // Listen for new tasks to trigger an immediate refresh\n    document.addEventListener('taskCreated', () => {\n        console.log('New task created, refreshing list...');\n        refreshTasks();\n    });\n}\n```\n\n### 8. `src/main.js`\n\nThis is the main entry point for the application. It orchestrates the rendering of the different components into the main `#app` container in `index.html`.\n\n```javascript\nimport { renderCreateTaskForm } from './components/CreateTaskForm.js';\nimport { renderTaskList } from './components/TaskList.js';\n\ndocument.addEventListener('DOMContentLoaded', () => {\n    const app = document.getElementById('app');\n\n    // Create main layout containers\n    const header = document.createElement('h1');\n    header.className = 'mb-4';\n    header.textContent = 'Nexus Agents';\n\n    const formRow = document.createElement('div');\n    formRow.className = 'row mb-4';\n    const formCol = document.createElement('div');\n    formCol.className = 'col-md-12';\n    formRow.appendChild(formCol);\n\n    const tasksRow = document.createElement('div');\n    tasksRow.className = 'row';\n    const tasksCol = document.createElement('div');\n    tasksCol.className = 'col-md-12';\n    tasksRow.appendChild(tasksCol);\n\n    // Append layout to the app container\n    app.appendChild(header);\n    app.appendChild(formRow);\n    app.appendChild(tasksRow);\n\n    // Render components into their containers\n    renderCreateTaskForm(formCol);\n    renderTaskList(tasksCol);\n});\n```",
+      "created_at": "2025-06-26T21:24:22.946526Z",
+      "updated_at": "2025-06-26T21:24:22.946526Z",
+      "metadata": {
+        "category": "Documentation",
+        "step_id": "step_3"
+      }
+    },
+    {
+      "id": "ca614e4e-3311-43df-acfd-0484291d6b6a",
+      "name": "src/components/Header/Header.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/components/Header/Header.html",
+      "content": "<h1 class=\"mb-4\">Nexus Agents</h1>",
+      "created_at": "2025-06-26T21:24:35.042668Z",
+      "updated_at": "2025-06-26T21:24:35.042668Z",
+      "metadata": {
+        "step_id": "step_5",
+        "category": "FileOperation"
+      }
+    },
+    {
+      "id": "0f51f68c-0071-4044-8028-ff2d99bf6094",
+      "name": "src/components/Hero/Hero.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/components/Hero/Hero.html",
+      "content": "<section class=\"hero\">\n    <h1 class=\"mb-4\">Nexus Agents</h1>\n</section>",
+      "created_at": "2025-06-26T21:25:09.077510Z",
+      "updated_at": "2025-06-26T21:25:09.077510Z",
+      "metadata": {
+        "category": "FileOperation",
+        "step_id": "step_7"
+      }
+    },
+    {
+      "id": "bb2e1826-613a-4df3-9f94-d2549f33edc6",
+      "name": "src/components/Features/Features.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/components/Features/Features.html",
+      "content": "</artifact>\n```",
+      "created_at": "2025-06-26T21:25:55.696928Z",
+      "updated_at": "2025-06-26T21:25:55.696928Z",
+      "metadata": {
+        "step_id": "step_9",
+        "category": "FileOperation"
+      }
+    },
+    {
+      "id": "d40440f2-e19b-440f-a78d-ce3b25b6e945",
+      "name": "src/components/Testimonials/Testimonials.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/components/Testimonials/Testimonials.html",
+      "content": "<section class=\"testimonials\">\n  <!-- Testimonials content moved from the main page -->\n  <div class=\"container py-5\">\n    <h2 class=\"text-center mb-5\">What Our Users Say</h2>\n    <div class=\"row\">\n      <div class=\"col-md-4 mb-4\">\n        <div class=\"card h-100\">\n          <div class=\"card-body\">\n            <blockquote class=\"blockquote mb-0\">\n              <p>\"Nexus Agents has revolutionized our research process. The AI-powered analysis is incredibly insightful and saves us countless hours.\"</p>\n              <footer class=\"blockquote-footer\">Jane Doe, <cite title=\"Source Title\">Research Lead at Innovate Inc.</cite></footer>\n            </blockquote>\n          </div>\n        </div>\n      </div>\n      <div class=\"col-md-4 mb-4\">\n        <div class=\"card h-100\">\n          <div class=\"card-body\">\n            <blockquote class=\"blockquote mb-0\">\n              <p>\"As a freelance journalist, staying ahead of trends is crucial. Nexus Agents is my secret weapon for deep-dive investigations.\"</p>\n              <footer class=\"blockquote-footer\">John Smith, <cite title=\"Source Title\">Investigative Journalist</cite></footer>\n            </blockquote>\n          </div>\n        </div>\n      </div>\n      <div class=\"col-md-4 mb-4\">\n        <div class=\"card h-100\">\n          <div class=\"card-body\">\n            <blockquote class=\"blockquote mb-0\">\n              <p>\"The continuous monitoring feature is a game-changer. I get updates on my topics of interest without lifting a finger. Highly recommended!\"</p>\n              <footer class=\"blockquote-footer\">Samantha Bee, <cite title=\"Source Title\">Market Analyst</cite></footer>\n            </blockquote>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n</section>",
+      "created_at": "2025-06-26T21:26:46.656654Z",
+      "updated_at": "2025-06-26T21:26:46.656654Z",
+      "metadata": {
+        "step_id": "step_11",
+        "category": "FileOperation"
+      }
+    },
+    {
+      "id": "232d332d-2c3f-46b9-afa2-09218f49b5c2",
+      "name": "src/components/CTA/CTA.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/components/CTA/CTA.html",
+      "content": "</artifact>\n```",
+      "created_at": "2025-06-26T21:27:51.759880Z",
+      "updated_at": "2025-06-26T21:27:51.759880Z",
+      "metadata": {
+        "step_id": "step_13",
+        "category": "FileOperation"
+      }
+    },
+    {
+      "id": "9c698922-8e1a-4143-8eeb-dbd70f744572",
+      "name": "src/components/Footer/Footer.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/components/Footer/Footer.html",
+      "content": "<footer class=\"footer mt-auto py-3 bg-light\">\n    <div class=\"container text-center\">\n        <span class=\"text-muted\">Nexus Agents &copy; 2024</span>\n    </div>\n</footer>",
+      "created_at": "2025-06-26T21:28:09.977905Z",
+      "updated_at": "2025-06-26T21:28:09.977905Z",
+      "metadata": {
+        "step_id": "step_15",
+        "category": "FileOperation"
+      }
+    },
+    {
+      "id": "4f681d4a-8c66-4fff-b553-68c47a59d0a5",
+      "name": "src/components/CreateTaskForm/CreateTaskForm.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/components/CreateTaskForm/CreateTaskForm.html",
+      "content": "<div class=\"row mb-4\">\n    <div class=\"col-md-12\">\n        <div class=\"card\">\n            <div class=\"card-header\">\n                <h5 class=\"card-title mb-0\">Create Research Task</h5>\n            </div>\n            <div class=\"card-body\">\n                <form id=\"create-task-form\">\n                    <div class=\"mb-3\">\n                        <label for=\"title\" class=\"form-label\">Title</label>\n                        <input type=\"text\" class=\"form-control\" id=\"title\" required>\n                    </div>\n                    <div class=\"mb-3\">\n                        <label for=\"description\" class=\"form-label\">Description</label>\n                        <textarea class=\"form-control\" id=\"description\" rows=\"3\" required></textarea>\n                    </div>\n                    <div class=\"mb-3 form-check\">\n                        <input type=\"checkbox\" class=\"form-check-input\" id=\"continuous-mode\">\n                        <label class=\"form-check-label\" for=\"continuous-mode\">Continuous Mode</label>\n                    </div>\n                    <div class=\"mb-3\" id=\"interval-container\" style=\"display: none;\">\n                        <label for=\"interval\" class=\"form-label\">Update Interval (hours)</label>\n                        <input type=\"number\" class=\"form-control\" id=\"interval\" value=\"24\" min=\"1\">\n                    </div>\n                    <button type=\"submit\" class=\"btn btn-primary\">Create Task</button>\n                </form>\n            </div>\n        </div>\n    </div>\n</div>",
+      "created_at": "2025-06-26T21:34:28.274914Z",
+      "updated_at": "2025-06-26T21:34:28.274914Z",
+      "metadata": {
+        "step_id": "step_9",
+        "category": "FileOperation"
+      }
+    },
+    {
+      "id": "8be251b8-3789-4c9b-acc6-db46da746042",
+      "name": "src/components/TaskList/TaskList.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/components/TaskList/TaskList.html",
+      "content": "<section id=\"task-list\" class=\"row\">\n    <div class=\"col-md-12\">\n        <h2>Research Tasks</h2>\n        <div id=\"tasks-container\">\n            <p>No tasks yet. Create one above!</p>\n        </div>\n    </div>\n</section>",
+      "created_at": "2025-06-26T21:34:52.258382Z",
+      "updated_at": "2025-06-26T21:34:52.258382Z",
+      "metadata": {
+        "category": "FileOperation",
+        "step_id": "step_11"
+      }
+    },
+    {
+      "id": "1cfa1d4c-0172-4297-923e-ae29257f0a32",
+      "name": "src/assets/css/style.css",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/assets/css/style.css",
+      "content": "body {\n    padding-top: 2rem;\n    padding-bottom: 2rem;\n}\n.task-card {\n    margin-bottom: 1rem;\n}\n.task-status {\n    font-weight: bold;\n}\n.status-created { color: #6c757d; }\n.status-planning { color: #17a2b8; }\n.status-searching { color: #007bff; }\n.status-summarizing { color: #fd7e14; }\n.status-reasoning { color: #6f42c1; }\n.status-generating_artifacts { color: #e83e8c; }\n.status-completed { color: #28a745; }\n.status-failed { color: #dc3545; }",
+      "created_at": "2025-06-26T21:35:03.634261Z",
+      "updated_at": "2025-06-26T21:35:03.634261Z",
+      "metadata": {
+        "category": "FileOperation",
+        "step_id": "step_13"
+      }
+    },
+    {
+      "id": "d31f1e09-1c8f-480e-bdc1-670f6104a1eb",
+      "name": "src/assets/js/main.js",
+      "artifact_type": "SourceCode",
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/assets/js/main.js",
+      "content": "// API endpoint\nconst API_URL = window.location.protocol + '//' + window.location.hostname + ':12000';\n\n// Task IDs\nlet taskIds = [];\n\n// Initialize the page\ndocument.addEventListener('DOMContentLoaded', function() {\n    // Load tasks from local storage\n    const storedTaskIds = localStorage.getItem('nexus_task_ids');\n    if (storedTaskIds) {\n        taskIds = JSON.parse(storedTaskIds);\n        refreshTasks();\n    }\n    \n    // Set up the form\n    const form = document.getElementById('create-task-form');\n    form.addEventListener('submit', createTask);\n    \n    // Set up the continuous mode checkbox\n    const continuousModeCheckbox = document.getElementById('continuous-mode');\n    continuousModeCheckbox.addEventListener('change', function() {\n        const intervalContainer = document.getElementById('interval-container');\n        intervalContainer.style.display = this.checked ? 'block' : 'none';\n    });\n    \n    // Refresh tasks every 10 seconds\n    setInterval(refreshTasks, 10000);\n});\n\n// Create a new task\nasync function createTask(event) {\n    event.preventDefault();\n    \n    const title = document.getElementById('title').value;\n    const description = document.getElementById('description').value;\n    const continuousMode = document.getElementById('continuous-mode').checked;\n    const interval = document.getElementById('interval').value;\n    \n    const data = {\n        title,\n        description,\n        continuous_mode: continuousMode,\n        continuous_interval_hours: continuousMode ? parseInt(interval) : null\n    };\n    \n    try {\n        const response = await fetch(`${API_URL}/tasks`, {\n            method: 'POST',\n            headers: {\n                'Content-Type': 'application/json'\n            },\n            body: JSON.stringify(data)\n        });\n        \n        if (!response.ok) {\n            throw new Error(`HTTP error! status: ${response.status}`);\n        }\n        \n        const result = await response.json();\n        \n        // Add the task ID to the list\n        taskIds.push(result.task_id);\n        \n        // Save the task IDs to local storage\n        localStorage.setItem('nexus_task_ids', JSON.stringify(taskIds));\n        \n        // Refresh the tasks\n        refreshTasks();\n        \n        // Reset the form\n        document.getElementById('create-task-form').reset();\n        document.getElementById('interval-container').style.display = 'none';\n    } catch (error) {\n        console.error('Error creating task:', error);\n        alert('Error creating task: ' + error.message);\n    }\n}\n\n// Refresh the tasks\nasync function refreshTasks() {\n    const tasksContainer = document.getElementById('tasks-container');\n    \n    if (taskIds.length === 0) {\n        tasksContainer.innerHTML = '<p>No tasks yet. Create one above!</p>';\n        return;\n    }\n    \n    // Clear the container\n    tasksContainer.innerHTML = '';\n    \n    // Fetch each task\n    for (const taskId of taskIds) {\n        try {\n            const response = await fetch(`${API_URL}/tasks/${taskId}`);\n            \n            if (!response.ok) {\n                throw new Error(`HTTP error! status: ${response.status}`);\n            }\n            \n            const task = await response.json();\n            \n            // Create a card for the task\n            const card = document.createElement('div');\n            card.className = 'card task-card';\n            \n            // Create the card header\n            const cardHeader = document.createElement('div');\n            cardHeader.className = 'card-header';\n            cardHeader.innerHTML = `\n                <h5 class=\"card-title mb-0\">${task.title}</h5>\n            `;\n            \n            // Create the card body\n            const cardBody = document.createElement('div');\n            cardBody.className = 'card-body';\n            cardBody.innerHTML = `\n                <p><strong>ID:</strong> ${task.task_id}</p>\n                <p><strong>Description:</strong> ${task.description}</p>\n                <p><strong>Status:</strong> <span class=\"task-status status-${task.status}\">${task.status}</span></p>\n                <p><strong>Continuous Mode:</strong> ${task.continuous_mode ? 'Yes' : 'No'}</p>\n                ${task.continuous_mode ? `<p><strong>Update Interval:</strong> ${task.continuous_interval_hours} hours</p>` : ''}\n                <p><strong>Created:</strong> ${task.created_at || 'N/A'}</p>\n                <p><strong>Updated:</strong> ${task.updated_at || 'N/A'}</p>\n            `;\n            \n            // Add artifacts if any\n            if (task.artifacts && task.artifacts.length > 0) {\n                const artifactsSection = document.createElement('div');\n                artifactsSection.innerHTML = '<h6>Artifacts:</h6>';\n                \n                const artifactsList = document.createElement('ul');\n                for (const artifact of task.artifacts) {\n                    const artifactItem = document.createElement('li');\n                    artifactItem.innerHTML = `\n                        <strong>${artifact.title}</strong> (${artifact.type})\n                        <br>\n                        <small>${artifact.filepath}</small>\n                    `;\n                    artifactsList.appendChild(artifactItem);\n                }\n                \n                artifactsSection.appendChild(artifactsList);\n                cardBody.appendChild(artifactsSection);\n            }\n            \n            // Add the header and body to the card\n            card.appendChild(cardHeader);\n            card.appendChild(cardBody);\n            \n            // Add the card to the container\n            tasksContainer.appendChild(card);\n        } catch (error) {\n            console.error(`Error fetching task ${taskId}:`, error);\n            \n            // Create an error card\n            const errorCard = document.createElement('div');\n            errorCard.className = 'card task-card';\n            errorCard.innerHTML = `\n                <div class=\"card-header\">\n                    <h5 class=\"card-title mb-0\">Error</h5>\n                </div>\n                <div class=\"card-body\">\n                    <p>Error fetching task ${taskId}: ${error.message}</p>\n                </div>\n            `;\n            \n            tasksContainer.appendChild(errorCard);\n        }\n    }\n}",
+      "created_at": "2025-06-26T21:35:37.200019Z",
+      "updated_at": "2025-06-26T21:35:37.200019Z",
+      "metadata": {
+        "step_id": "step_15",
+        "category": "FileOperation"
+      }
+    },
+    {
+      "id": "606a9686-b2b7-46c5-b629-9ba1a6ec3de5",
+      "name": "src/index.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/index.html",
+      "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Nexus Agents</title>\n    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css\" rel=\"stylesheet\">\n    <link rel=\"stylesheet\" href=\"css/style.css\">\n</head>\n<body>\n    <div class=\"container\">\n        <!-- Header Component -->\n        <h1 class=\"mb-4\">Nexus Agents</h1>\n        \n        <!-- Create Task Form Component -->\n        <div class=\"row mb-4\">\n            <div class=\"col-md-12\">\n                <div class=\"card\">\n                    <div class=\"card-header\">\n                        <h5 class=\"card-title mb-0\">Create Research Task</h5>\n                    </div>\n                    <div class=\"card-body\">\n                        <form id=\"create-task-form\">\n                            <div class=\"mb-3\">\n                                <label for=\"title\" class=\"form-label\">Title</label>\n                                <input type=\"text\" class=\"form-control\" id=\"title\" required>\n                            </div>\n                            <div class=\"mb-3\">\n                                <label for=\"description\" class=\"form-label\">Description</label>\n                                <textarea class=\"form-control\" id=\"description\" rows=\"3\" required></textarea>\n                            </div>\n                            <div class=\"mb-3 form-check\">\n                                <input type=\"checkbox\" class=\"form-check-input\" id=\"continuous-mode\">\n                                <label class=\"form-check-label\" for=\"continuous-mode\">Continuous Mode</label>\n                            </div>\n                            <div class=\"mb-3\" id=\"interval-container\" style=\"display: none;\">\n                                <label for=\"interval\" class=\"form-label\">Update Interval (hours)</label>\n                                <input type=\"number\" class=\"form-control\" id=\"interval\" value=\"24\" min=\"1\">\n                            </div>\n                            <button type=\"submit\" class=\"btn btn-primary\">Create Task</button>\n                        </form>\n                    </div>\n                </div>\n            </div>\n        </div>\n        \n        <!-- Task List Component -->\n        <div class=\"row\">\n            <div class=\"col-md-12\">\n                <h2>Research Tasks</h2>\n                <div id=\"tasks-container\">\n                    <p>Loading tasks...</p>\n                </div>\n            </div>\n        </div>\n    </div>\n    \n    <script src=\"js/api.js\"></script>\n    <script src=\"js/components/TaskList.js\"></script>\n    <script src=\"js/components/CreateTaskForm.js\"></script>\n    <script src=\"js/app.js\"></script>\n</body>\n</html>",
+      "created_at": "2025-06-26T21:36:22.532449Z",
+      "updated_at": "2025-06-26T21:36:22.532449Z",
+      "metadata": {
+        "step_id": "step_18",
+        "category": "FileOperation"
+      }
+    },
+    {
+      "id": "3d22fda0-4d17-4fc7-bffc-6d08c86722d0",
+      "name": "src/index.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/index.html",
+      "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Nexus Agents</title>\n    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css\" rel=\"stylesheet\">\n    <link rel=\"stylesheet\" href=\"assets/css/style.css\">\n</head>\n<body>\n    <div class=\"container\">\n        <div id=\"header-container\"></div>\n        <div id=\"create-task-form-container\"></div>\n        <div id=\"task-list-container\"></div>\n    </div>\n    \n    <script src=\"assets/js/main.js\" type=\"module\"></script>\n</body>\n</html>",
+      "created_at": "2025-06-26T21:37:44.596927Z",
+      "updated_at": "2025-06-26T21:37:44.596927Z",
+      "metadata": {
+        "step_id": "step_1",
+        "category": "FileOperation"
+      }
+    },
+    {
+      "id": "7e0f5732-a564-45d9-8415-44a501bb4ef3",
+      "name": "src/index.html",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/index.html",
+      "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Nexus Agents</title>\n    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css\" rel=\"stylesheet\">\n    <link rel=\"stylesheet\" href=\"assets/css/style.css\">\n</head>\n<body>\n    <div class=\"container\">\n        <h1 class=\"mb-4\">Nexus Agents</h1>\n        \n        <div id=\"create-task-container\">\n            <!-- Create Task Form component will be loaded here -->\n        </div>\n        \n        <div id=\"tasks-list-container\">\n            <!-- Tasks List component will be loaded here -->\n        </div>\n    </div>\n    \n    <script src=\"assets/js/main.js\"></script>\n</body>\n</html>",
+      "created_at": "2025-06-26T21:40:19.159183Z",
+      "updated_at": "2025-06-26T21:40:19.159183Z",
+      "metadata": {
+        "category": "CodeModification",
+        "step_id": "step_3"
+      }
+    },
+    {
+      "id": "69c8556d-41ec-4411-878f-970e5a655305",
+      "name": "src/assets/css/style.css",
+      "artifact_type": {
+        "Other": "unknown"
+      },
+      "path": "/Users/magos/dev/trilogy/nexus-agents/web/static/./artifacts/src/assets/css/style.css",
+      "content": "body {\n    padding-top: 2rem;\n    padding-bottom: 2rem;\n}\n.task-card {\n    margin-bottom: 1rem;\n}\n.task-status {\n    font-weight: bold;\n}\n.status-created { color: #6c757d; }\n.status-planning { color: #17a2b8; }\n.status-searching { color:",
+      "created_at": "2025-06-26T21:40:19.160295Z",
+      "updated_at": "2025-06-26T21:40:19.160295Z",
+      "metadata": {
+        "step_id": "step_3",
+        "category": "CodeModification"
+      }
+    }
+  ],
+  "metadata": {}
+}

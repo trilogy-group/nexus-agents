@@ -1,0 +1,24 @@
+{
+    "reasoning_model": {
+        "provider": "openai",
+        "model_name": "o3",
+        "max_tokens": 32768,
+        "temperature": 0.7,
+        "top_p": 1.0,
+        "additional_params": {
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0
+        }
+    },
+    "task_model": {
+        "provider": "openai",
+        "model_name": "gpt-4o",
+        "max_tokens": 16384,
+        "temperature": 0.5,
+        "top_p": 1.0,
+        "additional_params": {
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0
+        }
+    }
+}

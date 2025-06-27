@@ -1,0 +1,46 @@
+{
+  "firecrawl": {
+    "enabled": true,
+    "type": "nodejs",
+    "package": "firecrawl-mcp",
+    "command": "npx -y firecrawl-mcp",
+    "env": {
+      "FIRECRAWL_API_KEY": ""
+    },
+    "directory": "firecrawl-mcp",
+    "description": "Web scraping and crawling with Firecrawl"
+  },
+  "exa": {
+    "enabled": true,
+    "type": "nodejs",
+    "package": "exa-mcp-server",
+    "command": "npx exa-mcp-server",
+    "env": {
+      "EXA_API_KEY": ""
+    },
+    "directory": "exa-mcp",
+    "description": "Web search with Exa"
+  },
+  "perplexity": {
+    "enabled": true,
+    "type": "nodejs",
+    "package": "mcp-server-perplexity-ask",
+    "command": "npx mcp-server-perplexity-ask",
+    "env": {
+      "PERPLEXITY_API_KEY": ""
+    },
+    "directory": "perplexity-mcp/perplexity-ask",
+    "description": "AI-powered search with Perplexity"
+  },
+  "linkup": {
+    "name": "Linkup",
+    "command": "",
+    "type": "remote", 
+    "url": "https://mcp.linkup.so/sse",
+    "enabled": true,
+    "env": {
+      "LINKUP_API_KEY": ""
+    },
+    "description": "Web search with Linkup (remote MCP server)"
+  }
+}

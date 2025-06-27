@@ -1,0 +1,51 @@
+version: '3'
+
+services:
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "12000:12000"
+    depends_on:
+      - redis
+    command: python api.py --host 0.0.0.0 --port 12000
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DUCKDB_PATH=/app/data/nexus_agents.db
+      - STORAGE_PATH=/app/data/storage
+      - OUTPUT_DIR=/app/output
+      - LLM_CONFIG=/app/config/llm_config.json
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - XAI_API_KEY=${XAI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - LINKUP_API_KEY=${LINKUP_API_KEY}
+      - EXA_API_KEY=${EXA_API_KEY}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
+      - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
+    volumes:
+      - ./output:/app/output
+      - ./config:/app/config
+      - ./data:/app/data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "12001:12001"
+    depends_on:
+      - api
+    command: python web/server.py --host 0.0.0.0 --port 12001
+
+volumes:
+  redis-data:

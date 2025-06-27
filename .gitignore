@@ -192,3 +192,35 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Output directory
+output/
+
+# Redis dump
+dump.rdb
+
+# MongoDB data
+data/
+
+# External MCP Servers (managed by setup script)
+external_mcp_servers/*/
+
+# External MCP Server Virtual Environments
+external_mcp_servers/*/.venv/
+external_mcp_servers/*/.venv*
+external_mcp_servers/*/venv/
+external_mcp_servers/*/venv*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# MCP external servers (managed by setup script)
+external_mcp_servers/*/
+
+# Development files
+.dev_pids
