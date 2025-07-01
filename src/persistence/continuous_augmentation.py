@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Set
 from src.orchestration.agent_spawner import Agent
 from src.orchestration.communication_bus import CommunicationBus, Message
 from src.orchestration.task_manager import TaskManager, TaskStatus
-from src.persistence.knowledge_base import KnowledgeBase
+from src.persistence.postgres_knowledge_base import PostgresKnowledgeBase
 
 
 class ContinuousAugmentation(Agent):

@@ -24,6 +24,78 @@
         .status-generating_artifacts { color: #e83e8c; }
         .status-completed { color: #28a745; }
         .status-failed { color: #dc3545; }
+        
+        /* Operation timeline styles */
+        .operation-timeline {
+            margin-top: 1rem;
+            padding-left: 1rem;
+            border-left: 2px solid #dee2e6;
+        }
+        .operation-item {
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            background-color: #f8f9fa;
+            border-radius: 0.375rem;
+            position: relative;
+        }
+        .operation-item::before {
+            content: '';
+            position: absolute;
+            left: -6px;
+            top: 1rem;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #6c757d;
+        }
+        .operation-item.completed::before { background-color: #28a745; }
+        .operation-item.failed::before { background-color: #dc3545; }
+        .operation-item.running::before { background-color: #007bff; }
+        
+        .evidence-item {
+            margin: 0.5rem 0;
+            padding: 0.5rem;
+            background-color: #ffffff;
+            border: 1px solid #dee2e6;
+            border-radius: 0.25rem;
+            font-size: 0.875rem;
+        }
+        
+        .evidence-preview {
+            max-height: 100px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
+        }
+        
+        .collapse-toggle {
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .stat-card {
+            text-align: center;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 0.375rem;
+        }
+        
+        .stat-number {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #495057;
+        }
     </style>
 </head>
 <body>
@@ -65,18 +137,30 @@
             <div class="col-md-12">
                 <h2>Research Tasks</h2>
                 <div id="tasks-container">
-                    <p>No tasks yet. Create one above!</p>
+                    <div id="loading-spinner" class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading tasks...</span>
+                        </div>
+                        <p class="mt-2 text-muted">Loading tasks...</p>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
     
     <script>
+        // Global task IDs for local storage
+        let taskIds = JSON.parse(localStorage.getItem('nexus_task_ids') || '[]');
+        
+        // State management for expanded evidence sections
+        let evidenceState = {
+            expanded: new Set(), // Set of task IDs with expanded evidence
+            content: new Map(),  // Map of task ID -> evidence content
+            loading: new Set()   // Set of task IDs currently loading evidence
+        };
+        
         // API endpoint
         const API_URL = window.location.protocol + '//' + window.location.hostname + ':12000';
-        
-        // Task IDs
-        let taskIds = [];
         
         // Initialize the page
         document.addEventListener('DOMContentLoaded', function() {
@@ -155,24 +239,26 @@
         async function refreshTasks() {
             const tasksContainer = document.getElementById('tasks-container');
             
-            if (taskIds.length === 0) {
-                tasksContainer.innerHTML = '<p>No tasks yet. Create one above!</p>';
-                return;
-            }
-            
-            // Clear the container
-            tasksContainer.innerHTML = '';
-            
-            // Fetch each task
-            for (const taskId of taskIds) {
-                try {
-                    const response = await fetch(`${API_URL}/tasks/${taskId}`);
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    
-                    const task = await response.json();
+            try {
+                // Fetch all tasks from the API
+                const response = await fetch(`${API_URL}/tasks`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const tasks = await response.json();
+                
+                // Clear the container (removes loading spinner or previous content)
+                tasksContainer.innerHTML = '';
+                
+                if (tasks.length === 0) {
+                    tasksContainer.innerHTML = '<p class="text-muted text-center py-4">No tasks yet. Create one above!</p>';
+                    return;
+                }
+                
+                // Display each task
+                for (const task of tasks) {
                     
                     // Create a card for the task
                     const card = document.createElement('div');
@@ -197,6 +283,38 @@
                         <p><strong>Created:</strong> ${task.created_at || 'N/A'}</p>
                         <p><strong>Updated:</strong> ${task.updated_at || 'N/A'}</p>
                     `;
+                    
+                    // Add research evidence section
+                    const evidenceButton = document.createElement('button');
+                    evidenceButton.className = 'btn btn-outline-primary btn-sm mb-3';
+                    evidenceButton.onclick = () => toggleEvidence(task.task_id, evidenceButton);
+                    cardBody.appendChild(evidenceButton);
+                    
+                    // Create evidence container and restore state
+                    const evidenceContainer = document.createElement('div');
+                    evidenceContainer.id = `evidence-${task.task_id}`;
+                    cardBody.appendChild(evidenceContainer);
+                    
+                    // Restore expanded state and content if previously expanded
+                    if (evidenceState.expanded.has(task.task_id)) {
+                        evidenceButton.textContent = 'Hide Research Evidence';
+                        evidenceContainer.style.display = 'block';
+                        
+                        // Restore cached content or show loading
+                        if (evidenceState.content.has(task.task_id)) {
+                            evidenceContainer.innerHTML = evidenceState.content.get(task.task_id);
+                        } else if (evidenceState.loading.has(task.task_id)) {
+                            evidenceContainer.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm" role="status"></div> Loading evidence...</div>';
+                        } else {
+                            // Need to reload evidence
+                            evidenceContainer.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm" role="status"></div> Loading evidence...</div>';
+                            loadTaskEvidence(task.task_id);
+                        }
+                    } else {
+                        evidenceButton.textContent = 'Show Research Evidence';
+                        evidenceContainer.style.display = 'none';
+                        evidenceContainer.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm" role="status"></div> Loading evidence...</div>';
+                    }
                     
                     // Add artifacts if any
                     if (task.artifacts && task.artifacts.length > 0) {
@@ -224,25 +342,240 @@
                     
                     // Add the card to the container
                     tasksContainer.appendChild(card);
-                } catch (error) {
-                    console.error(`Error fetching task ${taskId}:`, error);
-                    
-                    // Create an error card
-                    const errorCard = document.createElement('div');
-                    errorCard.className = 'card task-card';
-                    errorCard.innerHTML = `
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">Error</h5>
-                        </div>
-                        <div class="card-body">
-                            <p>Error fetching task ${taskId}: ${error.message}</p>
-                        </div>
-                    `;
-                    
-                    tasksContainer.appendChild(errorCard);
                 }
+            } catch (error) {
+                console.error('Error fetching tasks:', error);
+                
+                // Show error message
+                tasksContainer.innerHTML = `
+                    <div class="alert alert-danger" role="alert">
+                        <h4 class="alert-heading">Error Loading Tasks</h4>
+                        <p>Unable to fetch tasks from the server: ${error.message}</p>
+                        <hr>
+                        <p class="mb-0">Please check that the API server is running on port 12000.</p>
+                    </div>
+                `;
             }
         }
+        
+        // Toggle evidence display for a task
+        async function toggleEvidence(taskId, button) {
+            const evidenceContainer = document.getElementById(`evidence-${taskId}`);
+            
+            if (evidenceContainer.style.display === 'none') {
+                // Show evidence
+                evidenceContainer.style.display = 'block';
+                button.textContent = 'Hide Research Evidence';
+                evidenceState.expanded.add(taskId);
+                
+                // Load evidence if not already loaded or in cache
+                if (!evidenceState.content.has(taskId)) {
+                    evidenceState.loading.add(taskId);
+                    await loadTaskEvidence(taskId);
+                    evidenceState.loading.delete(taskId);
+                } else {
+                    // Use cached content
+                    evidenceContainer.innerHTML = evidenceState.content.get(taskId);
+                }
+            } else {
+                // Hide evidence
+                evidenceContainer.style.display = 'none';
+                button.textContent = 'Show Research Evidence';
+                evidenceState.expanded.delete(taskId);
+            }
+        }
+        
+        // Load task evidence from API
+        async function loadTaskEvidence(taskId) {
+            const evidenceContainer = document.getElementById(`evidence-${taskId}`);
+            
+            try {
+                const response = await fetch(`${API_URL}/tasks/${taskId}/evidence`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const evidence = await response.json();
+                
+                // Build evidence display
+                const evidenceHTML = buildEvidenceDisplay(evidence);
+                evidenceContainer.innerHTML = evidenceHTML;
+                
+                // Cache the content for future use
+                evidenceState.content.set(taskId, evidenceHTML);
+                
+            } catch (error) {
+                console.error('Error fetching evidence:', error);
+                evidenceContainer.innerHTML = `
+                    <div class="alert alert-warning" role="alert">
+                        <small>Unable to load research evidence: ${error.message}</small>
+                    </div>
+                `;
+            }
+        }
+        
+        // Build evidence display HTML
+        function buildEvidenceDisplay(evidence) {
+            const stats = evidence.statistics;
+            const timeline = evidence.timeline;
+            
+            let html = `
+                <div class="mt-3">
+                    <h6>Research Evidence Summary</h6>
+                    
+                    <!-- Statistics -->
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-number">${stats.total_operations}</div>
+                            <div class="text-muted">Operations</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number">${stats.completed_operations}</div>
+                            <div class="text-muted">Completed</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number">${stats.total_evidence_items}</div>
+                            <div class="text-muted">Evidence Items</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number">${stats.search_providers_used.length}</div>
+                            <div class="text-muted">Search Providers</div>
+                        </div>
+                    </div>
+            `;
+            
+            // Add search providers used
+            if (stats.search_providers_used.length > 0) {
+                html += `
+                    <div class="mb-3">
+                        <strong>Search Providers:</strong> 
+                        ${stats.search_providers_used.map(provider => `<span class="badge bg-secondary me-1">${provider}</span>`).join('')}
+                    </div>
+                `;
+            }
+            
+            return html + buildTimelineDisplay(timeline) + '</div>';
+        }
+        
+        // Build timeline display HTML
+        function buildTimelineDisplay(timeline) {
+            if (timeline.length === 0) {
+                return '<p class="text-muted">No research operations recorded yet.</p>';
+            }
+            
+            let html = `
+                <h6 class="mt-4 mb-3">Research Timeline</h6>
+                <div class="operation-timeline">
+            `;
+            
+            for (const operation of timeline) {
+                const statusClass = operation.status || 'pending';
+                const duration = operation.duration_ms ? `${operation.duration_ms}ms` : 'N/A';
+                
+                html += `
+                    <div class="operation-item ${statusClass}">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <strong>${operation.operation_name}</strong>
+                                <span class="badge bg-primary ms-2">${operation.operation_type}</span>
+                                ${operation.agent_type ? `<span class="badge bg-info ms-1">${operation.agent_type}</span>` : ''}
+                            </div>
+                            <div class="text-end">
+                                <small class="text-muted">
+                                    Status: <span class="status-${statusClass}">${statusClass}</span><br>
+                                    Duration: ${duration}
+                                </small>
+                            </div>
+                        </div>
+                `;
+                
+                // Add input data if available
+                if (operation.input_data) {
+                    const inputStr = JSON.stringify(operation.input_data, null, 2);
+                    const inputPreview = inputStr.length > 200 ? inputStr.substring(0, 200) + '...' : inputStr;
+                    html += `
+                        <div class="mb-2">
+                            <small><strong>Input:</strong></small>
+                            <div class="evidence-preview">
+                                <small class="text-muted">${inputPreview}</small>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                // Add output data if available
+                if (operation.output_data) {
+                    const outputStr = JSON.stringify(operation.output_data, null, 2);
+                    const outputPreview = outputStr.length > 200 ? outputStr.substring(0, 200) + '...' : outputStr;
+                    html += `
+                        <div class="mb-2">
+                            <small><strong>Output:</strong></small>
+                            <div class="evidence-preview">
+                                <small class="text-muted">${outputPreview}</small>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                // Add error message if operation failed
+                if (operation.error_message) {
+                    html += `
+                        <div class="alert alert-danger py-1 mb-2">
+                            <small><strong>Error:</strong> ${operation.error_message}</small>
+                        </div>
+                    `;
+                }
+                
+                // Add evidence items
+                if (operation.evidence && operation.evidence.length > 0) {
+                    html += `
+                        <div class="mt-2">
+                            <small><strong>Evidence (${operation.evidence.length} items):</strong></small>
+                    `;
+                    
+                    for (const evidence of operation.evidence) {
+                        html += `
+                            <div class="evidence-item">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <strong>${evidence.evidence_type}</strong>
+                                        ${evidence.provider ? `<span class="badge bg-secondary ms-1">${evidence.provider}</span>` : ''}
+                                    </div>
+                                    ${evidence.source_url ? `<a href="${evidence.source_url}" target="_blank" class="btn btn-sm btn-outline-primary">View Source</a>` : ''}
+                                </div>
+                        `;
+                        
+                        if (evidence.evidence_data) {
+                            const evidenceStr = JSON.stringify(evidence.evidence_data, null, 2);
+                            const evidencePreview = evidenceStr.length > 300 ? evidenceStr.substring(0, 300) + '...' : evidenceStr;
+                            html += `
+                                <div class="evidence-preview mt-1">
+                                    <small class="text-muted">${evidencePreview}</small>
+                                </div>
+                            `;
+                        }
+                        
+                        html += '</div>';
+                    }
+                    
+                    html += '</div>';
+                }
+                
+                html += '</div>';
+            }
+            
+            html += '</div>';
+            return html;
+        }
+        
+        // Load tasks immediately when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            refreshTasks();
+        });
+        
+        // Set up auto-refresh every 5 seconds
+        setInterval(refreshTasks, 5000);
     </script>
 </body>
 </html>

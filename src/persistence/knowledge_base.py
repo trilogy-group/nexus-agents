@@ -132,6 +132,51 @@ class KnowledgeBase:
             )
         """)
         
+        # Task Operations table (for tracking individual operations within a task)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS task_operations (
+                operation_id VARCHAR PRIMARY KEY,
+                task_id VARCHAR NOT NULL,
+                operation_type VARCHAR NOT NULL, -- 'decomposition', 'search', 'scraping', 'summarization', 'reasoning', 'artifact_generation'
+                operation_name VARCHAR NOT NULL, -- Human-readable name
+                status VARCHAR DEFAULT 'pending', -- 'pending', 'running', 'completed', 'failed'
+                agent_type VARCHAR, -- Which agent performed this operation
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                duration_ms INTEGER,
+                input_data JSON, -- Input parameters/data for the operation
+                output_data JSON, -- Results/output from the operation
+                error_message TEXT,
+                metadata JSON
+            )
+        """)
+        
+        # Operation Evidence table (for detailed evidence of each operation)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS operation_evidence (
+                evidence_id VARCHAR PRIMARY KEY,
+                operation_id VARCHAR NOT NULL,
+                evidence_type VARCHAR NOT NULL, -- 'search_query', 'search_results', 'scraped_content', 'llm_prompt', 'llm_response', 'generated_artifact'
+                evidence_data JSON NOT NULL, -- The actual evidence data
+                source_url VARCHAR, -- URL if applicable
+                provider VARCHAR, -- Which provider/service generated this evidence
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                size_bytes INTEGER,
+                metadata JSON
+            )
+        """)
+        
+        # Operation Dependencies table (for tracking operation dependencies)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS operation_dependencies (
+                dependency_id VARCHAR PRIMARY KEY,
+                operation_id VARCHAR NOT NULL, -- The operation that depends on another
+                depends_on_operation_id VARCHAR NOT NULL, -- The operation it depends on
+                dependency_type VARCHAR DEFAULT 'sequential', -- 'sequential', 'parallel', 'conditional'
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         # Create indexes for better performance
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON research_tasks(status)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created ON research_tasks(created_at)")
@@ -141,6 +186,13 @@ class KnowledgeBase:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(type)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_sources_url ON sources(url)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_search_query ON search_results(query, provider)")
+        # New indexes for operation tracking
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_operations_task ON task_operations(task_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_operations_status ON task_operations(status)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_operations_type ON task_operations(operation_type)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_operation ON operation_evidence(operation_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_type ON operation_evidence(evidence_type)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_dependencies_operation ON operation_dependencies(operation_id)")
     
     # Research Tasks Methods
 
@@ -274,6 +326,31 @@ class KnowledgeBase:
                 task[field] = json.loads(task[field])
         
         return task
+    
+    async def get_all_tasks(self) -> List[Dict[str, Any]]:
+        """
+        Get all tasks from the knowledge base.
+        
+        Returns:
+            List of all tasks with parsed JSON fields.
+        """
+        results = self.conn.execute(
+            "SELECT * FROM research_tasks ORDER BY created_at DESC"
+        ).fetchall()
+        
+        tasks = []
+        for result in results:
+            # Convert result to dictionary
+            task = dict(zip([desc[0] for desc in self.conn.description], result))
+            
+            # Parse JSON fields
+            for field in ["metadata", "decomposition", "plan", "results", "summary", "reasoning"]:
+                if task[field]:
+                    task[field] = json.loads(task[field])
+            
+            tasks.append(task)
+        
+        return tasks
     
     async def update_task_status(self, task_id: str, status: str, completed_at: str = None):
         """Update the status of a task."""
@@ -720,3 +797,179 @@ class KnowledgeBase:
         if result:
             return json.loads(result[0])
         return None
+    
+    # Task Operations Methods (for research evidence tracking)
+    
+    async def create_operation(self, task_id: str, operation_type: str, operation_name: str, 
+                             agent_type: str = None, input_data: Dict[str, Any] = None, 
+                             metadata: Dict[str, Any] = None) -> str:
+        """Create a new operation for a task."""
+        operation_id = str(uuid.uuid4())
+        
+        self.conn.execute("""
+            INSERT INTO task_operations (operation_id, task_id, operation_type, operation_name, 
+                                       agent_type, input_data, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, [operation_id, task_id, operation_type, operation_name, agent_type,
+              json.dumps(input_data) if input_data else None,
+              json.dumps(metadata) if metadata else None])
+        
+        return operation_id
+    
+    async def start_operation(self, operation_id: str) -> None:
+        """Mark an operation as started."""
+        self.conn.execute("""
+            UPDATE task_operations 
+            SET status = 'running', started_at = CURRENT_TIMESTAMP
+            WHERE operation_id = ?
+        """, [operation_id])
+    
+    async def complete_operation(self, operation_id: str, output_data: Dict[str, Any] = None, 
+                               duration_ms: int = None) -> None:
+        """Mark an operation as completed."""
+        self.conn.execute("""
+            UPDATE task_operations 
+            SET status = 'completed', completed_at = CURRENT_TIMESTAMP, 
+                output_data = ?, duration_ms = ?
+            WHERE operation_id = ?
+        """, [json.dumps(output_data) if output_data else None, duration_ms, operation_id])
+    
+    async def fail_operation(self, operation_id: str, error_message: str) -> None:
+        """Mark an operation as failed."""
+        self.conn.execute("""
+            UPDATE task_operations 
+            SET status = 'failed', completed_at = CURRENT_TIMESTAMP, error_message = ?
+            WHERE operation_id = ?
+        """, [error_message, operation_id])
+    
+    async def get_task_operations(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get all operations for a task."""
+        results = self.conn.execute("""
+            SELECT * FROM task_operations 
+            WHERE task_id = ? 
+            ORDER BY started_at ASC
+        """, [task_id]).fetchall()
+        
+        operations = []
+        for result in results:
+            operation = dict(zip([desc[0] for desc in self.conn.description], result))
+            
+            # Parse JSON fields
+            for field in ["input_data", "output_data", "metadata"]:
+                if operation[field]:
+                    operation[field] = json.loads(operation[field])
+            
+            operations.append(operation)
+        
+        return operations
+    
+    async def get_operation(self, operation_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific operation by ID."""
+        result = self.conn.execute("""
+            SELECT * FROM task_operations WHERE operation_id = ?
+        """, [operation_id]).fetchone()
+        
+        if not result:
+            return None
+        
+        operation = dict(zip([desc[0] for desc in self.conn.description], result))
+        
+        # Parse JSON fields
+        for field in ["input_data", "output_data", "metadata"]:
+            if operation[field]:
+                operation[field] = json.loads(operation[field])
+        
+        return operation
+    
+    # Operation Evidence Methods
+    
+    async def add_operation_evidence(self, operation_id: str, evidence_type: str, 
+                                   evidence_data: Dict[str, Any], source_url: str = None,
+                                   provider: str = None, metadata: Dict[str, Any] = None) -> str:
+        """Add evidence for an operation."""
+        evidence_id = str(uuid.uuid4())
+        evidence_json = json.dumps(evidence_data)
+        size_bytes = len(evidence_json.encode('utf-8'))
+        
+        self.conn.execute("""
+            INSERT INTO operation_evidence (evidence_id, operation_id, evidence_type, 
+                                          evidence_data, source_url, provider, size_bytes, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, [evidence_id, operation_id, evidence_type, evidence_json, source_url, 
+              provider, size_bytes, json.dumps(metadata) if metadata else None])
+        
+        return evidence_id
+    
+    async def get_operation_evidence(self, operation_id: str) -> List[Dict[str, Any]]:
+        """Get all evidence for an operation."""
+        results = self.conn.execute("""
+            SELECT * FROM operation_evidence 
+            WHERE operation_id = ? 
+            ORDER BY created_at ASC
+        """, [operation_id]).fetchall()
+        
+        evidence_list = []
+        for result in results:
+            evidence = dict(zip([desc[0] for desc in self.conn.description], result))
+            
+            # Parse JSON fields
+            if evidence["evidence_data"]:
+                evidence["evidence_data"] = json.loads(evidence["evidence_data"])
+            if evidence["metadata"]:
+                evidence["metadata"] = json.loads(evidence["metadata"])
+            
+            evidence_list.append(evidence)
+        
+        return evidence_list
+    
+    async def get_task_timeline(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get a chronological timeline of all operations and evidence for a task."""
+        # Get operations with their evidence in chronological order
+        results = self.conn.execute("""
+            SELECT 
+                o.operation_id, o.operation_type, o.operation_name, o.status, 
+                o.agent_type, o.started_at, o.completed_at, o.duration_ms,
+                o.input_data, o.output_data, o.error_message,
+                e.evidence_id, e.evidence_type, e.evidence_data, 
+                e.source_url, e.provider, e.created_at as evidence_created_at
+            FROM task_operations o
+            LEFT JOIN operation_evidence e ON o.operation_id = e.operation_id
+            WHERE o.task_id = ?
+            ORDER BY o.started_at ASC, e.created_at ASC
+        """, [task_id]).fetchall()
+        
+        # Group by operation
+        operations_map = {}
+        for result in results:
+            row = dict(zip([desc[0] for desc in self.conn.description], result))
+            
+            operation_id = row['operation_id']
+            if operation_id not in operations_map:
+                operations_map[operation_id] = {
+                    'operation_id': operation_id,
+                    'operation_type': row['operation_type'],
+                    'operation_name': row['operation_name'],
+                    'status': row['status'],
+                    'agent_type': row['agent_type'],
+                    'started_at': row['started_at'],
+                    'completed_at': row['completed_at'],
+                    'duration_ms': row['duration_ms'],
+                    'input_data': json.loads(row['input_data']) if row['input_data'] else None,
+                    'output_data': json.loads(row['output_data']) if row['output_data'] else None,
+                    'error_message': row['error_message'],
+                    'evidence': []
+                }
+            
+            # Add evidence if it exists
+            if row['evidence_id']:
+                evidence = {
+                    'evidence_id': row['evidence_id'],
+                    'evidence_type': row['evidence_type'],
+                    'evidence_data': json.loads(row['evidence_data']) if row['evidence_data'] else None,
+                    'source_url': row['source_url'],
+                    'provider': row['provider'],
+                    'created_at': row['evidence_created_at']
+                }
+                operations_map[operation_id]['evidence'].append(evidence)
+        
+        return list(operations_map.values())
