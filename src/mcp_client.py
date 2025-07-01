@@ -101,6 +101,13 @@ class MCPClient:
                 url, api_key = self.get_remote_url_and_key(server_name, env_vars)
                 session = RemoteMCPSession(url, api_key)
             else:
+                # Get the server directory from config if specified
+                cwd = None
+                config = self.config_loader.get_server_config(server_name)
+                if config and 'directory' in config:
+                    cwd = f"external_mcp_servers/{config['directory']}"
+                    print(f"🗂️ Using working directory: {cwd}")
+                
                 # Start the process using subprocess (proven working approach)
                 process = subprocess.Popen(
                     command_parts,
@@ -109,7 +116,8 @@ class MCPClient:
                     stderr=subprocess.PIPE,
                     env=env,
                     text=True,
-                    bufsize=0  # Unbuffered
+                    bufsize=0,  # Unbuffered
+                    cwd=cwd  # Use the server's directory as working directory
                 )
                 
                 # Wait a moment for the server to start

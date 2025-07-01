@@ -16,8 +16,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from src.persistence.knowledge_base import KnowledgeBase
+from src.persistence.postgres_knowledge_base import PostgresKnowledgeBase
 from src.orchestration.task_manager import TaskStatus
+from src.orchestration.research_orchestrator import ResearchOrchestrator
+from src.orchestration.communication_bus import CommunicationBus
+from src.llm import LLMClient
 
 # Load environment variables
 load_dotenv(override=True)
@@ -37,6 +40,7 @@ app.add_middleware(
 # Global instances
 redis_client: Optional[redis.Redis] = None
 task_queue_key = "nexus:task_queue"
+global_research_orchestrator: Optional[ResearchOrchestrator] = None
 
 
 # Define the API models
@@ -46,6 +50,11 @@ class ResearchTaskCreate(BaseModel):
     description: str
     continuous_mode: bool = False
     continuous_interval_hours: Optional[int] = None
+
+class ResearchTaskQuery(BaseModel):
+    """Model for creating a research query."""
+    research_query: str
+    user_id: Optional[str] = None
 
 
 class ResearchTaskStatus(BaseModel):
@@ -63,27 +72,42 @@ class ResearchTaskStatus(BaseModel):
 
 from contextlib import asynccontextmanager
 
-# Helper context manager to get a short-lived KnowledgeBase connection
+# Global PostgreSQL Knowledge Base instance with connection pooling
+global_kb: Optional[PostgresKnowledgeBase] = None
+
+# Helper context manager to get the shared PostgreSQL KnowledgeBase
 @asynccontextmanager
 async def get_kb(read_only: bool = True):
-    duckdb_path = os.environ.get("DUCKDB_PATH", "data/nexus_agents.db")
-    storage_path = os.environ.get("STORAGE_PATH", "data/storage")
-    kb = KnowledgeBase(db_path=duckdb_path, storage_path=storage_path, read_only=read_only)
-    await kb.connect()
-    try:
-        yield kb
-    finally:
-        await kb.disconnect()
+    """Get the shared PostgreSQL Knowledge Base instance.
+    
+    Note: read_only parameter is ignored for PostgreSQL as it supports
+    concurrent read/write operations through connection pooling.
+    """
+    global global_kb
+    if global_kb is None:
+        raise HTTPException(status_code=500, detail="Knowledge Base not initialized")
+    
+    # PostgreSQL supports concurrent connections, so we can use the same instance
+    yield global_kb
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections and systems on startup."""
-    global redis_client
+    global redis_client, global_kb, global_research_orchestrator
+    
     # Get configuration from environment variables
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-    duckdb_path = os.environ.get("DUCKDB_PATH", "data/nexus_agents.db")
     storage_path = os.environ.get("STORAGE_PATH", "data/storage")
+    
+    # Initialize PostgreSQL Knowledge Base
+    global_kb = PostgresKnowledgeBase(storage_path=storage_path)
+    try:
+        await global_kb.connect()
+        print(f"Connected to PostgreSQL Knowledge Base: {global_kb.host}:{global_kb.port}/{global_kb.database}")
+    except Exception as e:
+        print(f"Failed to connect to PostgreSQL: {e}")
+        raise
     
     # Initialize Redis connection
     redis_client = redis.Redis.from_url(redis_url)
@@ -93,14 +117,39 @@ async def startup_event():
     except Exception as e:
         print(f"Failed to connect to Redis: {e}")
         raise
+    
+    # Initialize Research Orchestrator
+    try:
+        communication_bus = CommunicationBus(redis_url=redis_url)
+        await communication_bus.connect()
+        
+        llm_client = LLMClient(config_path=os.getenv("LLM_CONFIG", "config/llm_config.json"))
+        
+        global_research_orchestrator = ResearchOrchestrator(
+            communication_bus=communication_bus,
+            llm_client=llm_client,
+            knowledge_base=global_kb
+        )
+        print("Initialized Research Orchestrator")
+    except Exception as e:
+        print(f"Failed to initialize Research Orchestrator: {e}")
+        # Don't raise - API can still function without orchestrator
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections on shutdown."""
-    global redis_client
+    global redis_client, global_kb
+    
+    # Clean up PostgreSQL connection pool
+    if global_kb:
+        await global_kb.disconnect()
+        print("Disconnected from PostgreSQL Knowledge Base")
+    
+    # Clean up Redis connection
     if redis_client:
         await redis_client.close()
+        print("Disconnected from Redis")
 
 
 @app.get("/")
@@ -145,6 +194,51 @@ async def create_task(task: ResearchTaskCreate):
     return {"task_id": task_id}
 
 
+@app.get("/tasks", response_model=List[ResearchTaskStatus])
+async def get_all_tasks():
+    """Return all tasks with their status and artifacts."""
+    async with get_kb(read_only=True) as kb:
+        tasks = await kb.get_all_tasks()
+        
+    result = []
+    for task in tasks:
+        # Get artifacts for each task
+        async with get_kb(read_only=True) as kb:
+            artifacts = await kb.get_artifacts_for_task(task["task_id"])
+
+        formatted_artifacts = [
+            {
+                "type": a["format"],
+                "name": a["title"],
+                "path": a["file_path"] or f"/artifacts/{a['artifact_id']}",
+                "size": a["size_bytes"] or 0,
+                "created_at": a["created_at"],
+            }
+            for a in artifacts
+        ]
+
+        created_at = task["created_at"]
+        updated_at = task.get("updated_at")
+        if not isinstance(created_at, str):
+            created_at = created_at.isoformat()
+        if updated_at and not isinstance(updated_at, str):
+            updated_at = updated_at.isoformat()
+
+        result.append(ResearchTaskStatus(
+            task_id=task["task_id"],
+            title=task["title"],
+            description=task.get("description") or task.get("query"),
+            status=task["status"],
+            continuous_mode=task.get("metadata", {}).get("continuous_mode", False),
+            continuous_interval_hours=task.get("metadata", {}).get("continuous_interval_hours"),
+            created_at=created_at,
+            updated_at=updated_at,
+            artifacts=formatted_artifacts,
+        ))
+        
+    return result
+
+
 @app.get("/tasks/{task_id}", response_model=ResearchTaskStatus)
 async def get_task_status(task_id: str):
     """Return the task status and artifacts."""
@@ -152,7 +246,7 @@ async def get_task_status(task_id: str):
         task = await kb.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        artifacts = await kb.get_task_artifacts(task_id)
+        artifacts = await kb.get_artifacts_for_task(task_id)
 
     formatted_artifacts = [
         {
@@ -188,9 +282,9 @@ async def get_task_status(task_id: str):
 @app.get("/health")
 async def health_check():
     """Simple health check."""
-    global redis_client
+    global redis_client, global_kb
 
-    status = {"status": "healthy", "redis": "disconnected", "duckdb": "disconnected"}
+    status = {"status": "healthy", "redis": "disconnected", "postgresql": "disconnected"}
 
     # Redis connectivity
     try:
@@ -201,13 +295,18 @@ async def health_check():
         status["redis"] = "unhealthy"
         status["status"] = "unhealthy"
 
-    # DuckDB connectivity (open short read-only session)
+    # PostgreSQL connectivity
     try:
-        async with get_kb(read_only=True) as kb:
-            kb.conn.execute("SELECT 1").fetchone()
-            status["duckdb"] = "connected"
+        if global_kb:
+            health_ok = await global_kb.health_check()
+            status["postgresql"] = "connected" if health_ok else "unhealthy"
+            if not health_ok:
+                status["status"] = "unhealthy"
+        else:
+            status["postgresql"] = "not_initialized"
+            status["status"] = "unhealthy"
     except Exception:
-        status["duckdb"] = "unhealthy"
+        status["postgresql"] = "unhealthy"
         status["status"] = "unhealthy"
 
     return status
@@ -228,6 +327,152 @@ async def health_check():
         pass
     
     return health_status
+
+
+@app.get("/tasks/{task_id}/operations")
+async def get_task_operations(task_id: str):
+    """Get all operations for a specific task."""
+    async with get_kb() as kb:
+        operations = await kb.get_task_operations(task_id)
+        return {"task_id": task_id, "operations": operations}
+
+
+@app.get("/tasks/{task_id}/timeline")
+async def get_task_timeline(task_id: str):
+    """Get a chronological timeline of all operations and evidence for a task."""
+    async with get_kb() as kb:
+        timeline = await kb.get_task_timeline(task_id)
+        return {"task_id": task_id, "timeline": timeline}
+
+
+@app.get("/operations/{operation_id}")
+async def get_operation_details(operation_id: str):
+    """Get detailed information about a specific operation."""
+    async with get_kb() as kb:
+        operation = await kb.get_operation(operation_id)
+        if not operation:
+            raise HTTPException(status_code=404, detail="Operation not found")
+        
+        # Get evidence for this operation
+        evidence = await kb.get_operation_evidence(operation_id)
+        operation["evidence"] = evidence
+        
+        return operation
+
+
+@app.get("/tasks/{task_id}/evidence")
+async def get_task_evidence(task_id: str):
+    """Get consolidated evidence view for a task showing all operations with their evidence."""
+    async with get_kb() as kb:
+        # Get task details
+        task = await kb.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        # Get timeline with operations and evidence
+        timeline = await kb.get_task_timeline(task_id)
+        
+        # Get task artifacts
+        artifacts = await kb.get_artifacts_for_task(task_id)
+        
+        # Create consolidated evidence summary
+        evidence_summary = {
+            "task": task,
+            "timeline": timeline,
+            "artifacts": artifacts,
+            "statistics": {
+                "total_operations": len(timeline),
+                "completed_operations": len([op for op in timeline if op["status"] == "completed"]),
+                "failed_operations": len([op for op in timeline if op["status"] == "failed"]),
+                "total_evidence_items": sum(len(op.get("evidence", [])) for op in timeline),
+                "total_artifacts": len(artifacts),
+                "search_providers_used": list(set(
+                    evidence["provider"] for op in timeline 
+                    for evidence in op.get("evidence", []) 
+                    if evidence.get("provider")
+                ))
+            }
+        }
+        
+        return evidence_summary
+
+
+# Research Workflow API Endpoints
+@app.post("/api/research/tasks", response_model=dict)
+async def create_research_task(task: ResearchTaskQuery):
+    """Create a new research task and start the workflow."""
+    if not global_research_orchestrator:
+        raise HTTPException(status_code=500, detail="Research Orchestrator not initialized")
+    
+    try:
+        task_id = await global_research_orchestrator.start_research_task(
+            research_query=task.research_query,
+            user_id=task.user_id
+        )
+        
+        return {
+            "task_id": task_id,
+            "research_query": task.research_query,
+            "status": "pending",
+            "message": "Research task started successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create research task: {str(e)}")
+
+
+@app.get("/api/research/tasks/{task_id}/status")
+async def get_research_task_status(task_id: str):
+    """Get the status and progress of a research task."""
+    if not global_research_orchestrator:
+        raise HTTPException(status_code=500, detail="Research Orchestrator not initialized")
+    
+    try:
+        status = await global_research_orchestrator.get_research_task_status(task_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Research task not found")
+        
+        return status
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get task status: {str(e)}")
+
+
+@app.get("/api/research/tasks/{task_id}/report")
+async def get_research_report(task_id: str):
+    """Download the final research report in markdown format."""
+    if not global_research_orchestrator:
+        raise HTTPException(status_code=500, detail="Research Orchestrator not initialized")
+    
+    try:
+        report = await global_research_orchestrator.get_research_report(task_id)
+        if not report:
+            raise HTTPException(status_code=404, detail="Research report not found or not completed")
+        
+        return {
+            "task_id": task_id,
+            "report_markdown": report,
+            "format": "markdown"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get research report: {str(e)}")
+
+
+@app.get("/api/research/tasks")
+async def list_research_tasks(user_id: Optional[str] = None):
+    """List all research tasks for a user."""
+    # This would need to be implemented in the knowledge base
+    async with get_kb() as kb:
+        try:
+            # For now, return a placeholder - this would need a new method in PostgresKnowledgeBase
+            return {
+                "tasks": [],
+                "message": "Research task listing not yet implemented"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to list tasks: {str(e)}")
 
 
 def main():
