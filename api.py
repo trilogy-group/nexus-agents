@@ -224,13 +224,20 @@ async def get_all_tasks():
         if updated_at and not isinstance(updated_at, str):
             updated_at = updated_at.isoformat()
 
+        # Safely handle metadata that might be None
+        metadata = task.get("metadata") or {}
+        
+        # Ensure title and description are always strings (not None) for Pydantic validation
+        title = task.get("title") or "Untitled Task"
+        description = task.get("description") or task.get("query") or task.get("research_query") or "No description available"
+        
         result.append(ResearchTaskStatus(
             task_id=task["task_id"],
-            title=task["title"],
-            description=task.get("description") or task.get("query"),
+            title=title,
+            description=description,
             status=task["status"],
-            continuous_mode=task.get("metadata", {}).get("continuous_mode", False),
-            continuous_interval_hours=task.get("metadata", {}).get("continuous_interval_hours"),
+            continuous_mode=metadata.get("continuous_mode", False),
+            continuous_interval_hours=metadata.get("continuous_interval_hours"),
             created_at=created_at,
             updated_at=updated_at,
             artifacts=formatted_artifacts,
@@ -268,15 +275,43 @@ async def get_task_status(task_id: str):
 
     return ResearchTaskStatus(
         task_id=task["task_id"],
-        title=task["title"],
-        description=task.get("description") or task.get("query"),
+        title=task.get("title") or "Untitled Task",
+        description=task.get("description") or task.get("query") or task.get("research_query") or "No description",
         status=task["status"],
-        continuous_mode=task.get("metadata", {}).get("continuous_mode", False),
-        continuous_interval_hours=task.get("metadata", {}).get("continuous_interval_hours"),
+        continuous_mode=(task.get("metadata") or {}).get("continuous_mode", False),
+        continuous_interval_hours=(task.get("metadata") or {}).get("continuous_interval_hours"),
         created_at=created_at,
         updated_at=updated_at,
         artifacts=formatted_artifacts,
     )
+
+
+@app.delete("/tasks/{task_id}")
+async def delete_task(task_id: str):
+    """Delete a research task and all related data (deep cleanup)."""
+    async with get_kb() as kb:
+        try:
+            # Perform deep delete of task and all related data
+            deleted = await kb.delete_research_task(task_id)
+            
+            if deleted:
+                return {
+                    "message": f"Successfully deleted task {task_id} and all related data",
+                    "task_id": task_id,
+                    "deleted": True
+                }
+            else:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"Task {task_id} not found"
+                )
+                
+        except Exception as e:
+            logger.error(f"Error deleting task {task_id}: {str(e)}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to delete task: {str(e)}"
+            )
 
 
 @app.get("/health")

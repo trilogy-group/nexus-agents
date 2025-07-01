@@ -11,11 +11,7 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}Stopping Nexus Agents Development Environment...${NC}"
 
-# Check for --all flag to stop everything including Redis
-STOP_ALL=false
-if [[ "$1" == "--all" ]]; then
-    STOP_ALL=true
-fi
+# Always stop all services including Redis by default
 
 # Stop processes from PID file
 if [ -f .dev_pids ]; then
@@ -53,34 +49,16 @@ else
     fi
 fi
 
-# Handle Redis stopping
-if [ "$STOP_ALL" = true ]; then
-    response="y"
+# Stop Redis automatically
+echo "Stopping Redis..."
+if docker ps | grep "nexus-agents-redis-1\|nexus-redis" >/dev/null 2>&1; then
+    echo "Stopping Redis Docker container..."
+    docker compose stop redis >/dev/null 2>&1 || docker stop nexus-redis >/dev/null 2>&1 || true
+elif pgrep redis-server >/dev/null 2>&1; then
+    echo "Stopping local Redis server..."
+    redis-cli shutdown >/dev/null 2>&1
 else
-    # Use timeout for the read command with a default value
-    echo -e "\n${YELLOW}Stop Redis? (y/N) - will default to 'N' in 5 seconds${NC}"
-    if read -r -t 5 response; then
-        # User provided input
-        :
-    else
-        # Timeout occurred, use default
-        echo -e "\nTimeout - keeping Redis running"
-        response="n"
-    fi
-fi
-
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-    if docker ps | grep nexus-redis >/dev/null 2>&1; then
-        echo "Stopping Redis Docker container..."
-        docker stop nexus-redis
-    elif pgrep redis-server >/dev/null 2>&1; then
-        echo "Stopping local Redis server..."
-        redis-cli shutdown
-    else
-        echo "No Redis instance found"
-    fi
-else
-    echo "Redis left running"
+    echo "No Redis instance found"
 fi
 
 echo -e "\n${GREEN} All services stopped!${NC}"

@@ -4,7 +4,7 @@
         "model_name": "llama3",
         "api_base": "http://localhost:11434",
         "max_tokens": 4096,
-        "temperature": 0.7,
+        "temperature": 1.0,
         "top_p": 1.0,
         "additional_params": {
             "num_ctx": 8192
@@ -15,7 +15,7 @@
         "model_name": "mistral",
         "api_base": "http://localhost:11434",
         "max_tokens": 2048,
-        "temperature": 0.5,
+        "temperature": 1.0,
         "top_p": 1.0,
         "additional_params": {
             "num_ctx": 4096

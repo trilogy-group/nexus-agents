@@ -72,28 +72,27 @@ echo -e "\n${YELLOW}Starting Redis...${NC}"
 REDIS_STARTED=false
 
 if command_exists docker && docker info >/dev/null 2>&1; then
-    if ! port_in_use 6379; then
-        echo "Starting Redis using Docker..."
-        docker run -d --name nexus-redis -p 6379:6379 redis:latest >/dev/null 2>&1 || {
-            echo "Redis container already exists, starting it..."
-            docker start nexus-redis >/dev/null 2>&1
-        }
+    # Test if Redis is actually functional, not just port availability
+    if redis-cli ping >/dev/null 2>&1; then
+        echo "Redis already running and responding"
         REDIS_STARTED=true
     else
-        echo "Redis already running on port 6379"
+        echo "Starting Redis and PostgreSQL using Docker Compose..."
+        docker compose up -d redis postgres >/dev/null 2>&1
         REDIS_STARTED=true
     fi
 elif command_exists redis-server; then
-    if ! port_in_use 6379; then
+    # Test if Redis is actually functional, not just port availability
+    if redis-cli ping >/dev/null 2>&1; then
+        echo "Redis already running and responding"
+        REDIS_STARTED=true
+    else
         echo "Starting local Redis server..."
         redis-server --daemonize yes
         REDIS_STARTED=true
-    else
-        echo "Redis already running on port 6379"
-        REDIS_STARTED=true
     fi
-elif port_in_use 6379; then
-    echo "Redis already running on port 6379"
+elif redis-cli ping >/dev/null 2>&1; then
+    echo "Redis already running and responding"
     REDIS_STARTED=true
 else
     echo -e "${RED}Error: Redis is required but not available.${NC}"
@@ -150,11 +149,16 @@ echo "API backend PID: $API_PID"
 # Wait for API to be ready
 wait_for_service "API backend" "curl -s http://localhost:12000/docs >/dev/null 2>&1"
 
+# Start worker process
+echo -e "\n${YELLOW}Starting background worker...${NC}"
+uv run python -m src.worker > logs/worker.log 2>&1 &
+WORKER_PID=$!
+echo "Worker PID: $WORKER_PID"
+
 # Start Web UI
 echo -e "\n${YELLOW}Starting Web UI on port 12001...${NC}"
 cd web && uv run python server.py > ../logs/web.log 2>&1 &
 WEB_PID=$!
-cd ..
 echo "Web UI PID: $WEB_PID"
 
 # Wait for Web UI to be ready
@@ -162,6 +166,7 @@ wait_for_service "Web UI" "curl -s http://localhost:12001 >/dev/null 2>&1"
 
 # Create PID file for cleanup
 echo "API_PID=$API_PID" > .dev_pids
+echo "WORKER_PID=$WORKER_PID" >> .dev_pids
 echo "WEB_PID=$WEB_PID" >> .dev_pids
 
 # Success message
@@ -170,12 +175,17 @@ echo -e "\n${GREEN}Services running:${NC}"
 echo "  - Redis: localhost:6379"
 echo "  - API Backend: http://localhost:12000"
 echo "  - API Docs: http://localhost:12000/docs"
+echo "  - Worker: Processing tasks in background"
 echo "  - Web UI: http://localhost:12001"
 echo -e "\n${YELLOW}Logs:${NC}"
 echo "  - API: logs/api.log"
+echo "  - Worker: logs/worker.log"
 echo "  - Web UI: logs/web.log"
 echo -e "\n${YELLOW}To stop all services, run:${NC} ./scripts/stop_dev.sh"
 
 # Keep script running and show logs
 echo -e "\n${YELLOW}Following logs (Ctrl+C to exit)...${NC}"
-tail -f logs/api.log logs/web.log
+# Wait a moment for log files to be created and ensure they exist
+sleep 2
+touch logs/api.log logs/worker.log logs/web.log 2>/dev/null || true
+tail -f logs/api.log logs/worker.log logs/web.log

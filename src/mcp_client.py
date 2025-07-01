@@ -832,8 +832,8 @@ class MCPSearchClient:
         return await self.mcp_client.call_tool(
             "linkup",
             server_config["command"],
-            "search",
-            {"query": query, "max_results": max_results},
+            "search-web",
+            {"query": query, "depth": "standard"},
             env_vars
         )
     
@@ -853,7 +853,7 @@ class MCPSearchClient:
         return await self.mcp_client.call_tool(
             "exa",
             server_config["command"],
-            "search",
+            "web_search_exa",
             {"query": query, "num_results": num_results},
             env_vars
         )
@@ -874,8 +874,8 @@ class MCPSearchClient:
         return await self.mcp_client.call_tool(
             "perplexity",
             server_config["command"],
-            "ask",
-            {"question": query},
+            "perplexity_research",
+            {"messages": [{"role": "user", "content": query}]},
             env_vars
         )
     
@@ -986,6 +986,42 @@ class MCPSearchClient:
             Resource content as string
         """
         return await self.mcp_client.read_resource(server_name, server_script, resource_uri, env_vars)
+
+    async def search_web(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+        """
+        Unified web search method that delegates to available search providers.
+        
+        Args:
+            query: Search query
+            max_results: Maximum number of results to return
+            
+        Returns:
+            List of search results
+        """
+        # Try different search providers in order of preference
+        try:
+            # First try Linkup (most reliable for web search)
+            return await self.search_linkup(query, max_results)
+        except Exception as e:
+            print(f"Linkup search failed: {e}")
+            try:
+                # Fallback to Exa
+                return await self.search_exa(query, max_results)
+            except Exception as e2:
+                print(f"Exa search failed: {e2}")
+                try:
+                    # Last fallback to Perplexity
+                    result = await self.search_perplexity(query)
+                    # Convert Perplexity result to list format
+                    if isinstance(result, dict):
+                        return [result]
+                    elif isinstance(result, list):
+                        return result[:max_results]
+                    else:
+                        return []
+                except Exception as e3:
+                    print(f"All search providers failed: Linkup({e}), Exa({e2}), Perplexity({e3})")
+                    return []
 
 
 # Example usage

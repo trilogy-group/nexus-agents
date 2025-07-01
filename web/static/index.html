@@ -182,8 +182,8 @@
                 intervalContainer.style.display = this.checked ? 'block' : 'none';
             });
             
-            // Refresh tasks every 10 seconds
-            setInterval(refreshTasks, 10000);
+            // Start smart polling
+            startSmartPolling();
         });
         
         // Create a new task
@@ -274,21 +274,56 @@
                     // Create the card body
                     const cardBody = document.createElement('div');
                     cardBody.className = 'card-body';
-                    cardBody.innerHTML = `
-                        <p><strong>ID:</strong> ${task.task_id}</p>
-                        <p><strong>Description:</strong> ${task.description}</p>
+                    
+                    // Basic task information
+                    const basicInfo = document.createElement('div');
+                    basicInfo.className = 'task-basic-info mb-3';
+                    basicInfo.innerHTML = `
+                        <p><strong>Task ID:</strong> <code>${task.task_id}</code></p>
+                        <p><strong>Research Query:</strong> ${task.description || 'No query specified'}</p>
                         <p><strong>Status:</strong> <span class="task-status status-${task.status}">${task.status}</span></p>
-                        <p><strong>Continuous Mode:</strong> ${task.continuous_mode ? 'Yes' : 'No'}</p>
-                        ${task.continuous_mode ? `<p><strong>Update Interval:</strong> ${task.continuous_interval_hours} hours</p>` : ''}
                         <p><strong>Created:</strong> ${task.created_at || 'N/A'}</p>
                         <p><strong>Updated:</strong> ${task.updated_at || 'N/A'}</p>
+                        ${task.continuous_mode ? `<p><strong>Continuous Mode:</strong> ${task.continuous_interval_hours} hours</p>` : ''}
                     `;
+                    cardBody.appendChild(basicInfo);
                     
-                    // Add research evidence section
+                    // Add placeholders for workflow data (will be populated when we fetch detailed task info)
+                    const workflowInfo = document.createElement('div');
+                    workflowInfo.className = 'task-workflow-info mb-3';
+                    workflowInfo.innerHTML = `
+                        <div class="workflow-section" id="decomposition-${task.task_id}" style="display: none;">
+                            <h6 class="text-primary">Topic Decomposition</h6>
+                            <div class="decomposition-content"></div>
+                        </div>
+                        <div class="workflow-section" id="agents-${task.task_id}" style="display: none;">
+                            <h6 class="text-success">Executed Agents</h6>
+                            <div class="agents-content"></div>
+                        </div>
+                        <div class="workflow-section" id="report-${task.task_id}" style="display: none;">
+                            <h6 class="text-info">Research Report</h6>
+                            <div class="report-content"></div>
+                        </div>
+                    `;
+                    cardBody.appendChild(workflowInfo);
+                    
+                    // Add research evidence section and delete button
+                    const buttonContainer = document.createElement('div');
+                    buttonContainer.className = 'mb-3';
+                    
                     const evidenceButton = document.createElement('button');
-                    evidenceButton.className = 'btn btn-outline-primary btn-sm mb-3';
+                    evidenceButton.className = 'btn btn-outline-primary btn-sm me-2';
                     evidenceButton.onclick = () => toggleEvidence(task.task_id, evidenceButton);
-                    cardBody.appendChild(evidenceButton);
+                    buttonContainer.appendChild(evidenceButton);
+                    
+                    // Add delete button
+                    const deleteButton = document.createElement('button');
+                    deleteButton.className = 'btn btn-outline-danger btn-sm';
+                    deleteButton.innerHTML = '<i class="fas fa-trash"></i> Delete Task';
+                    deleteButton.onclick = () => deleteTask(task.task_id, task.title);
+                    buttonContainer.appendChild(deleteButton);
+                    
+                    cardBody.appendChild(buttonContainer);
                     
                     // Create evidence container and restore state
                     const evidenceContainer = document.createElement('div');
@@ -342,6 +377,9 @@
                     
                     // Add the card to the container
                     tasksContainer.appendChild(card);
+                    
+                    // Load detailed workflow information for this task
+                    loadTaskWorkflowDetails(task.task_id);
                 }
             } catch (error) {
                 console.error('Error fetching tasks:', error);
@@ -355,6 +393,132 @@
                         <p class="mb-0">Please check that the API server is running on port 12000.</p>
                     </div>
                 `;
+            }
+        }
+        
+        // Load detailed workflow information for a task
+        async function loadTaskWorkflowDetails(taskId) {
+            try {
+                // Fetch detailed task information
+                const taskResponse = await fetch(`${API_URL}/tasks/${taskId}`);
+                if (taskResponse.ok) {
+                    const taskDetails = await taskResponse.json();
+                    displayTaskWorkflowInfo(taskId, taskDetails);
+                }
+                
+                // Fetch task operations to show executed agents
+                const operationsResponse = await fetch(`${API_URL}/tasks/${taskId}/operations`);
+                if (operationsResponse.ok) {
+                    const operationsData = await operationsResponse.json();
+                    displayExecutedAgents(taskId, operationsData.operations);
+                }
+                
+                // Fetch research report if available
+                const reportResponse = await fetch(`${API_URL}/api/research/tasks/${taskId}/report`);
+                if (reportResponse.ok) {
+                    const reportData = await reportResponse.json();
+                    displayResearchReport(taskId, reportData.report_markdown);
+                }
+            } catch (error) {
+                console.error(`Error loading workflow details for task ${taskId}:`, error);
+            }
+        }
+        
+        // Display task workflow information (decomposition, metadata, etc.)
+        function displayTaskWorkflowInfo(taskId, taskDetails) {
+            const decompositionSection = document.getElementById(`decomposition-${taskId}`);
+            const decompositionContent = decompositionSection.querySelector('.decomposition-content');
+            
+            // Show decomposition if available in task metadata
+            if (taskDetails.decomposition || (taskDetails.metadata && taskDetails.metadata.decomposition)) {
+                const decomposition = taskDetails.decomposition || taskDetails.metadata.decomposition;
+                let html = '<div class="alert alert-light p-2">';
+                
+                if (typeof decomposition === 'string') {
+                    html += `<p class="mb-0">${decomposition}</p>`;
+                } else if (decomposition.subtopics) {
+                    html += '<strong>Subtopics:</strong><ul class="mb-0 mt-1">';
+                    decomposition.subtopics.forEach(topic => {
+                        html += `<li>${topic}</li>`;
+                    });
+                    html += '</ul>';
+                } else {
+                    html += `<pre class="mb-0"><code>${JSON.stringify(decomposition, null, 2)}</code></pre>`;
+                }
+                
+                html += '</div>';
+                decompositionContent.innerHTML = html;
+                decompositionSection.style.display = 'block';
+            }
+        }
+        
+        // Display executed search agents/providers
+        function displayExecutedAgents(taskId, operations) {
+            const agentsSection = document.getElementById(`agents-${taskId}`);
+            const agentsContent = agentsSection.querySelector('.agents-content');
+            
+            if (operations && operations.length > 0) {
+                // Extract unique agents and providers from operations
+                const agents = new Set();
+                const providers = new Set();
+                
+                operations.forEach(op => {
+                    if (op.agent_type) agents.add(op.agent_type);
+                    if (op.operation_type === 'search' && op.output_data && op.output_data.provider) {
+                        providers.add(op.output_data.provider);
+                    }
+                });
+                
+                let html = '<div class="alert alert-light p-2">';
+                
+                if (agents.size > 0) {
+                    html += '<div class="mb-2"><strong>Agents:</strong> ';
+                    html += Array.from(agents).map(agent => 
+                        `<span class="badge bg-success me-1">${agent}</span>`
+                    ).join('');
+                    html += '</div>';
+                }
+                
+                if (providers.size > 0) {
+                    html += '<div><strong>Providers:</strong> ';
+                    html += Array.from(providers).map(provider => 
+                        `<span class="badge bg-info me-1">${provider}</span>`
+                    ).join('');
+                    html += '</div>';
+                }
+                
+                html += '</div>';
+                agentsContent.innerHTML = html;
+                agentsSection.style.display = 'block';
+            }
+        }
+        
+        // Display research report
+        function displayResearchReport(taskId, reportMarkdown) {
+            const reportSection = document.getElementById(`report-${taskId}`);
+            const reportContent = reportSection.querySelector('.report-content');
+            
+            if (reportMarkdown) {
+                let html = '<div class="alert alert-light p-3">';
+                
+                // Simple markdown-to-HTML conversion for basic formatting
+                const htmlContent = reportMarkdown
+                    .replace(/^### (.*$)/gim, '<h5>$1</h5>')
+                    .replace(/^## (.*$)/gim, '<h4>$1</h4>')
+                    .replace(/^# (.*$)/gim, '<h3>$1</h3>')
+                    .replace(/^\* (.*$)/gim, '<li>$1</li>')
+                    .replace(/^- (.*$)/gim, '<li>$1</li>')
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                    .replace(/\n\n/g, '</p><p>')
+                    .replace(/\n/g, '<br>');
+                
+                html += `<div style="max-height: 400px; overflow-y: auto;"><p>${htmlContent}</p></div>`;
+                html += `<div class="mt-2"><small class="text-muted">Report length: ${reportMarkdown.length} characters</small></div>`;
+                html += '</div>';
+                
+                reportContent.innerHTML = html;
+                reportSection.style.display = 'block';
             }
         }
         
@@ -570,12 +734,134 @@
         }
         
         // Load tasks immediately when page loads
+        // Smart polling implementation
+        let pollInterval = null;
+        let lastTaskStates = {};
+        
+        function startSmartPolling() {
+            // Initial load
+            refreshTasks();
+            
+            // Set up intelligent polling
+            pollInterval = setInterval(() => {
+                refreshTasksIntelligently();
+            }, 15000); // Base interval: 15 seconds (much less aggressive)
+        }
+        
+        async function refreshTasksIntelligently() {
+            try {
+                const response = await fetch(`${API_URL}/tasks`);
+                if (!response.ok) return;
+                
+                const tasks = await response.json();
+                let hasActiveTasks = false;
+                
+                for (const task of tasks) {
+                    const taskId = task.task_id;
+                    const currentStatus = task.status;
+                    const lastStatus = lastTaskStates[taskId];
+                    
+                    // Track if we have any active (non-terminal) tasks
+                    if (currentStatus === 'pending' || currentStatus === 'decomposing' || currentStatus === 'searching') {
+                        hasActiveTasks = true;
+                    }
+                    
+                    // Only refresh task details if status changed or task is active
+                    if (lastStatus !== currentStatus || currentStatus === 'pending' || currentStatus === 'decomposing' || currentStatus === 'searching') {
+                        await loadTaskWorkflowDetails(taskId);
+                    }
+                    
+                    // Update our state tracking
+                    lastTaskStates[taskId] = currentStatus;
+                }
+                
+                // Update the display
+                displayTasks(tasks);
+                
+                // Adjust polling frequency based on activity
+                if (!hasActiveTasks) {
+                    // If no active tasks, reduce polling to every 30 seconds
+                    if (pollInterval) {
+                        clearInterval(pollInterval);
+                        pollInterval = setInterval(refreshTasksIntelligently, 30000);
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Error in intelligent refresh:', error);
+            }
+        }
+        
+        // Delete a research task and all related data
+        async function deleteTask(taskId, taskTitle) {
+            // Show confirmation dialog
+            const confirmed = confirm(
+                `Are you sure you want to delete the task "${taskTitle}"?\n\n` +
+                `This will permanently remove:\n` +
+                `• The task and all its data\n` +
+                `• All research operations\n` +
+                `• All evidence and logs\n` +
+                `• Any generated reports\n` +
+                `• All artifacts\n\n` +
+                `This action cannot be undone.`
+            );
+            
+            if (!confirmed) {
+                return;
+            }
+            
+            try {
+                // Show loading state
+                const taskCard = document.querySelector(`[data-task-id="${taskId}"]`);
+                if (taskCard) {
+                    taskCard.style.opacity = '0.5';
+                    taskCard.style.pointerEvents = 'none';
+                }
+                
+                // Call DELETE API endpoint
+                const response = await fetch(`${API_URL}/tasks/${taskId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        throw new Error('Task not found');
+                    } else {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                    }
+                }
+                
+                const result = await response.json();
+                console.log('Task deleted successfully:', result);
+                
+                // Show success message
+                alert(`Task "${taskTitle}" has been successfully deleted.`);
+                
+                // Refresh the tasks list to remove the deleted task
+                refreshTasks();
+                
+            } catch (error) {
+                console.error('Error deleting task:', error);
+                alert(`Error deleting task: ${error.message}`);
+                
+                // Restore card state on error
+                const taskCard = document.querySelector(`[data-task-id="${taskId}"]`);
+                if (taskCard) {
+                    taskCard.style.opacity = '1';
+                    taskCard.style.pointerEvents = 'auto';
+                }
+            }
+        }
+        
         document.addEventListener('DOMContentLoaded', function() {
             refreshTasks();
         });
         
-        // Set up auto-refresh every 5 seconds
-        setInterval(refreshTasks, 5000);
+        // Smart polling started in DOMContentLoaded
     </script>
 </body>
 </html>

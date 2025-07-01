@@ -360,6 +360,24 @@ class PostgresKnowledgeBase:
             
             return operations
     
+    async def get_task_timeline(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get task timeline with operations and their evidence."""
+        # Get all operations for the task
+        operations = await self.get_task_operations(task_id)
+        
+        # For each operation, get its evidence
+        timeline = []
+        for operation in operations:
+            # Get evidence for this operation
+            evidence = await self.get_operation_evidence(operation["operation_id"])
+            
+            # Add evidence to operation data
+            timeline_entry = operation.copy()
+            timeline_entry["evidence"] = evidence
+            timeline.append(timeline_entry)
+        
+        return timeline
+    
     async def get_operation_evidence(self, operation_id: str) -> List[Dict[str, Any]]:
         """Get all evidence for an operation."""
         async with self.pool.acquire() as conn:
@@ -531,4 +549,82 @@ class PostgresKnowledgeBase:
             
             if row:
                 return row['report_markdown']
+            
             return None
+    
+    async def delete_research_task(self, task_id: str) -> bool:
+        """
+        Deep delete a research task and ALL related data.
+        
+        This performs a comprehensive cleanup of:
+        - operation_evidence (linked to task operations)
+        - task_operations (linked to task)
+        - artifacts (linked to task)
+        - research_reports (linked to task)
+        - research_tasks (main record)
+        
+        Args:
+            task_id: The task ID to delete
+            
+        Returns:
+            bool: True if task was found and deleted, False if not found
+        """
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                # First, check if the task exists
+                task_exists = await conn.fetchval(
+                    "SELECT 1 FROM research_tasks WHERE task_id = $1",
+                    task_id
+                )
+                
+                if not task_exists:
+                    logger.warning(f"Task {task_id} not found for deletion")
+                    return False
+                
+                logger.info(f"Starting deep delete for research task {task_id}")
+                
+                # Step 1: Get all operation IDs for this task (needed for evidence cleanup)
+                operation_ids = await conn.fetch(
+                    "SELECT operation_id FROM task_operations WHERE task_id = $1",
+                    task_id
+                )
+                operation_id_list = [row['operation_id'] for row in operation_ids]
+                
+                # Step 2: Delete operation evidence (must be first due to foreign keys)
+                if operation_id_list:
+                    evidence_count = await conn.execute(
+                        "DELETE FROM operation_evidence WHERE operation_id = ANY($1)",
+                        operation_id_list
+                    )
+                    logger.info(f"Deleted {evidence_count.split()[-1]} evidence records")
+                
+                # Step 3: Delete task operations
+                operations_count = await conn.execute(
+                    "DELETE FROM task_operations WHERE task_id = $1",
+                    task_id
+                )
+                logger.info(f"Deleted {operations_count.split()[-1]} operations")
+                
+                # Step 4: Delete artifacts
+                artifacts_count = await conn.execute(
+                    "DELETE FROM artifacts WHERE task_id = $1",
+                    task_id
+                )
+                logger.info(f"Deleted {artifacts_count.split()[-1]} artifacts")
+                
+                # Step 5: Delete research reports
+                reports_count = await conn.execute(
+                    "DELETE FROM research_reports WHERE task_id = $1",
+                    task_id
+                )
+                logger.info(f"Deleted {reports_count.split()[-1]} research reports")
+                
+                # Step 6: Finally delete the main task record
+                task_count = await conn.execute(
+                    "DELETE FROM research_tasks WHERE task_id = $1",
+                    task_id
+                )
+                logger.info(f"Deleted {task_count.split()[-1]} task record")
+                
+                logger.info(f"Successfully completed deep delete for research task {task_id}")
+                return True

@@ -1,14 +1,19 @@
 #!/bin/bash
 
 # Check if Docker Compose is installed
-if ! command -v docker-compose &> /dev/null; then
-    echo "Docker Compose is not installed. Please install it first."
+if ! command -v docker &> /dev/null; then
+    echo "Docker is not installed. Please install it first."
+    exit 1
+fi
+
+if ! docker compose version &> /dev/null; then
+    echo "Docker Compose is not available. Please ensure Docker Desktop is running."
     exit 1
 fi
 
 # Start the services
 echo "Starting Nexus Agents services..."
-docker-compose up -d
+docker compose up -d
 
 # Wait for the services to start
 echo "Waiting for services to start..."
@@ -26,6 +31,6 @@ read -p "Press Enter to stop the services..."
 
 # Stop the services
 echo "Stopping Nexus Agents services..."
-docker-compose down
+docker compose down
 
 echo "Nexus Agents services stopped."

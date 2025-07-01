@@ -23,7 +23,7 @@ async def test_openai():
         model_name="gpt-3.5-turbo",
         api_key=os.environ.get("OPENAI_API_KEY"),
         max_tokens=100,
-        temperature=0.7
+        temperature=1
     )
     
     client = LLMClient(reasoning_config=config, task_config=config)
@@ -44,7 +44,7 @@ async def test_anthropic():
         model_name="claude-3-haiku-20240307",
         api_key=os.environ.get("ANTHROPIC_API_KEY"),
         max_tokens=100,
-        temperature=0.7
+        temperature=1
     )
     
     client = LLMClient(reasoning_config=config, task_config=config)
@@ -65,7 +65,7 @@ async def test_ollama():
         model_name="llama3",
         api_base="http://localhost:11434",
         max_tokens=100,
-        temperature=0.7
+        temperature=1
     )
     
     client = LLMClient(reasoning_config=config, task_config=config)
@@ -87,7 +87,7 @@ async def test_config_file():
             "provider": "openai",
             "model_name": "gpt-3.5-turbo",
             "max_tokens": 100,
-            "temperature": 0.7
+            "temperature": 1
         },
         "task_model": {
             "provider": "openai",

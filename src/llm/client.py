@@ -37,7 +37,7 @@ class LLMConfig(BaseModel):
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     max_tokens: int = 4096
-    temperature: float = 0.7
+    temperature: float = 1.0
     top_p: float = 1.0
     additional_params: Dict[str, Any] = Field(default_factory=dict)
 
@@ -97,7 +97,7 @@ class LLMClient:
                 model_name="gpt-4-turbo",
                 api_key=openai_api_key,
                 max_tokens=4096,
-                temperature=0.7
+                temperature=1.0
             )
         else:
             # Fall back to Ollama if no API key is available
@@ -106,7 +106,7 @@ class LLMClient:
                 model_name="llama3",
                 api_base="http://localhost:11434",
                 max_tokens=4096,
-                temperature=0.7
+                temperature=1.0
             )
     
     def _get_default_task_config(self) -> LLMConfig:
@@ -120,7 +120,7 @@ class LLMClient:
                 model_name="gpt-3.5-turbo",
                 api_key=openai_api_key,
                 max_tokens=2048,
-                temperature=0.5
+                temperature=1.0
             )
         else:
             # Fall back to Ollama if no API key is available
@@ -129,7 +129,7 @@ class LLMClient:
                 model_name="mistral",
                 api_base="http://localhost:11434",
                 max_tokens=2048,
-                temperature=0.5
+                temperature=1.0
             )
     
     def _get_token_param(self, model_name: str, tokens: int) -> Dict[str, int]:
