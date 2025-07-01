@@ -39,8 +39,7 @@ async def main(config_path: str = None):
     # Load the search providers configuration
     search_providers_config = SearchProvidersConfig.from_env()
     
-    # Get the DuckDB configuration
-    duckdb_path = os.environ.get("DUCKDB_PATH", "data/nexus_agents.db")
+    # Get the storage configuration (PostgreSQL used for database)
     storage_path = os.environ.get("STORAGE_PATH", "data/storage")
     
     # Get the Neo4j configuration
@@ -48,12 +47,11 @@ async def main(config_path: str = None):
     neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
     neo4j_password = os.environ.get("NEO4J_PASSWORD", "password")
     
-    # Create the Nexus Agents system
+    # Create the Nexus Agents system (now uses PostgreSQL)
     nexus_agents = NexusAgents(
         llm_client=llm_client,
         communication_bus=communication_bus,
         search_providers_config=search_providers_config,
-        duckdb_path=duckdb_path,
         storage_path=storage_path,
         neo4j_uri=neo4j_uri,
         neo4j_user=neo4j_user,

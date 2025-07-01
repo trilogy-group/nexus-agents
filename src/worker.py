@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.nexus_agents import NexusAgents
 from src.orchestration.communication_bus import CommunicationBus
 from src.orchestration.task_manager import TaskStatus
-from src.persistence.knowledge_base import KnowledgeBase
+from src.persistence.postgres_knowledge_base import PostgresKnowledgeBase
 from src.llm import LLMClient
 from src.config.search_providers import SearchProvidersConfig
 from src.mcp_config_loader import MCPConfigLoader
@@ -48,12 +48,10 @@ class ResearchWorker:
     
     def __init__(self, 
                  redis_url: str = "redis://localhost:6379/0",
-                 duckdb_path: str = "data/nexus_agents.db",
                  storage_path: str = "data/storage",
                  worker_id: Optional[str] = None):
         """Initialize the research worker."""
         self.redis_url = redis_url
-        self.duckdb_path = duckdb_path
         self.storage_path = storage_path
         self.worker_id = worker_id or f"worker-{os.getpid()}"
         
@@ -64,7 +62,6 @@ class ResearchWorker:
         
         # Components
         self.nexus_agents: Optional[NexusAgents] = None
-        self.knowledge_base: Optional[KnowledgeBase] = None
         
         # Control flags
         self.running = False
@@ -80,10 +77,8 @@ class ResearchWorker:
             await self.redis_client.ping()
             logger.info("Connected to Redis")
             
-            # Store knowledge base connection parameters instead of persistent connection
-            self.duckdb_path = self.duckdb_path
-            self.storage_path = self.storage_path
-            logger.info("Knowledge base configuration loaded")
+            # PostgreSQL knowledge base will be initialized via NexusAgents
+            logger.info("PostgreSQL knowledge base will be initialized via NexusAgents")
             
             # Initialize Nexus Agents system
             await self._initialize_nexus_agents()
@@ -105,8 +100,7 @@ class ResearchWorker:
         
         # Clean up connections
         if self.nexus_agents:
-            # Note: We'll need to implement proper cleanup in NexusAgents
-            pass
+            await self.nexus_agents.stop()
             
         if self.redis_client:
             await self.redis_client.close()
@@ -138,9 +132,11 @@ class ResearchWorker:
             llm_client=llm_client,
             communication_bus=communication_bus,
             search_providers_config=search_providers_config,
-            duckdb_path=self.duckdb_path,
             storage_path=self.storage_path
         )
+        
+        # Start Nexus Agents system (connects PostgreSQL knowledge base for operation tracking)
+        await self.nexus_agents.start()
         
     async def _process_tasks(self):
         """Main task processing loop."""
@@ -165,15 +161,11 @@ class ResearchWorker:
                 
                 logger.info(f"Processing task {task_id}: {task.get('title', 'Untitled')}")
 
-                # Ensure task exists in DB (create if missing)
-                self.knowledge_base = KnowledgeBase(
-                    db_path=self.duckdb_path,
-                    storage_path=self.storage_path
-                )
-                await self.knowledge_base.connect()
-                existing = await self.knowledge_base.get_task(task_id)
+                # Ensure task exists in DB (create if missing) - use shared PostgreSQL knowledge base
+                kb = self.nexus_agents.knowledge_base
+                existing = await kb.get_task(task_id)
                 if not existing:
-                    await self.knowledge_base.create_task(
+                    await kb.create_task(
                         task_id=task_id,
                         title=task.get("title"),
                         description=task.get("description"),
@@ -183,19 +175,13 @@ class ResearchWorker:
                             "continuous_interval_hours": task.get("continuous_interval_hours"),
                         },
                     )
-                await self.knowledge_base.disconnect()
+                # No need to disconnect - PostgreSQL uses connection pooling
                 
                 # Move task to processing set
                 await self.redis_client.sadd(self.processing_key, task_json)
                 
-                # Update task status in database
-                self.knowledge_base = KnowledgeBase(
-                    db_path=self.duckdb_path,
-                    storage_path=self.storage_path
-                )
-                await self.knowledge_base.connect()
-                await self._update_task_status(task_id, TaskStatus.PLANNING)
-                await self.knowledge_base.disconnect()
+                # Update task status in database using shared PostgreSQL knowledge base
+                await self._update_task_status_pg(task_id, TaskStatus.PLANNING)
                 
                 # Execute the research task
                 await self._execute_research_task(task)
@@ -222,38 +208,23 @@ class ResearchWorker:
         task_id = task["task_id"]
         
         try:
-            # Update status to searching
-            self.knowledge_base = KnowledgeBase(
-                db_path=self.duckdb_path,
-                storage_path=self.storage_path
-            )
-            await self.knowledge_base.connect()
-            await self._update_task_status(task_id, TaskStatus.SEARCHING)
-            await self.knowledge_base.disconnect()
+            # Update status to searching using shared PostgreSQL knowledge base
+            await self._update_task_status_pg(task_id, TaskStatus.SEARCHING)
             
-            # Execute the research
+            # Execute the research (NexusAgents handles all DB operations internally with PostgreSQL)
             result = await self.nexus_agents.research(
                 query=task["description"],
+                task_id=task_id,
                 max_depth=3,
                 max_breadth=5
             )
             
-            # Update status to completed
-            self.knowledge_base = KnowledgeBase(
-                db_path=self.duckdb_path,
-                storage_path=self.storage_path
-            )
-            await self.knowledge_base.connect()
-            await self._update_task_status(task_id, TaskStatus.COMPLETED)
-            await self.knowledge_base.disconnect()
+            # Update status to completed using shared PostgreSQL knowledge base
+            await self._update_task_status_pg(task_id, TaskStatus.COMPLETED)
             
-            # Store results in knowledge base
-            self.knowledge_base = KnowledgeBase(
-                db_path=self.duckdb_path,
-                storage_path=self.storage_path
-            )
-            await self.knowledge_base.connect()
-            await self.knowledge_base.update_task(
+            # Store results in PostgreSQL knowledge base (shared instance)
+            kb = self.nexus_agents.knowledge_base
+            await kb.update_task(
                 task_id=task_id,
                 status="completed",
                 completed_at=datetime.utcnow(),
@@ -261,7 +232,6 @@ class ResearchWorker:
                 summary=result.get("summary"),
                 reasoning=result.get("reasoning")
             )
-            await self.knowledge_base.disconnect()
             
             logger.info(f"Task {task_id} completed successfully")
             
@@ -269,42 +239,26 @@ class ResearchWorker:
             logger.error(f"Task {task_id} failed: {e}")
             logger.error(traceback.format_exc())
             
-            # Update status to failed
-            self.knowledge_base = KnowledgeBase(
-                db_path=self.duckdb_path,
-                storage_path=self.storage_path
-            )
-            await self.knowledge_base.connect()
-            await self._update_task_status(task_id, TaskStatus.FAILED)
-            await self.knowledge_base.disconnect()
+            # Update status to failed using shared PostgreSQL knowledge base
+            await self._update_task_status_pg(task_id, TaskStatus.FAILED)
             
-            # Store error in knowledge base
-            self.knowledge_base = KnowledgeBase(
-                db_path=self.duckdb_path,
-                storage_path=self.storage_path
-            )
-            await self.knowledge_base.connect()
-            await self.knowledge_base.update_task(
+            # Store error in PostgreSQL knowledge base (shared instance)
+            kb = self.nexus_agents.knowledge_base
+            await kb.update_task(
                 task_id=task_id,
                 status="failed",
                 metadata={"error": str(e), "traceback": traceback.format_exc()}
             )
-            await self.knowledge_base.disconnect()
             
-    async def _update_task_status(self, task_id: str, status: TaskStatus):
-        """Update task status in the database and publish update event."""
-        # Update in database
-        self.knowledge_base = KnowledgeBase(
-            db_path=self.duckdb_path,
-            storage_path=self.storage_path
-        )
-        await self.knowledge_base.connect()
-        await self.knowledge_base.update_task(
+    async def _update_task_status_pg(self, task_id: str, status: TaskStatus):
+        """Update task status in PostgreSQL database and publish update event."""
+        # Update in PostgreSQL database using shared knowledge base
+        kb = self.nexus_agents.knowledge_base
+        await kb.update_task(
             task_id=task_id,
             status=status.value,
             updated_at=datetime.utcnow()
         )
-        await self.knowledge_base.disconnect()
         
         # Publish status update event
         status_update = {
@@ -334,14 +288,12 @@ async def main():
     """Main entry point for the worker process."""
     # Get configuration from environment
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-    duckdb_path = os.environ.get("DUCKDB_PATH", "data/nexus_agents.db")
     storage_path = os.environ.get("STORAGE_PATH", "data/storage")
     worker_id = os.environ.get("WORKER_ID")
     
-    # Create and start worker
+    # Create and start worker (now uses PostgreSQL instead of DuckDB)
     worker = ResearchWorker(
         redis_url=redis_url,
-        duckdb_path=duckdb_path,
         storage_path=storage_path,
         worker_id=worker_id
     )

@@ -6,6 +6,76 @@ A sophisticated multi-agent system designed for continuous, iterative, and deep 
 
 The Nexus Agents system implements a hierarchical multi-agent architecture with the following layers:
 
+```mermaid
+graph TB
+    %% Web Interface Layer
+    UI["🌐 Web UI<br/>(Port 12001)"] --> API["🚀 API Server<br/>(Port 12000)"]
+    
+    %% API and Queue Layer
+    API --> RQ["📋 Redis Queue<br/>(Task Management)"]
+    API --> DB[("🐘 PostgreSQL<br/>(Knowledge Base)")]
+    
+    %% Worker and Orchestration Layer
+    RQ --> W["⚙️ Worker Process<br/>(Background)"]
+    W --> RO["🎯 Research Orchestrator<br/>(Workflow Coordination)"]
+    W --> CB["📡 Communication Bus<br/>(Redis Pub/Sub)"]
+    
+    %% Agent Orchestration
+    W --> NA["🤖 Nexus Agents<br/>(Orchestrator)"]
+    
+    %% Research Planning Agents
+    NA --> TDA["📋 Topic Decomposer<br/>Agent"]
+    NA --> PA["📝 Planning<br/>Agent"]
+    
+    %% Search Agents Layer
+    NA --> SA["🔍 Search Agents"]
+    SA --> LSA["🌐 Linkup<br/>Search Agent"]
+    SA --> ESA["🔬 Exa<br/>Search Agent"]
+    SA --> PSA["🧠 Perplexity<br/>Search Agent"]
+    SA --> FSA["🕷️ Firecrawl<br/>Search Agent"]
+    
+    %% MCP Integration
+    LSA --> MCP1["📡 MCP Server<br/>(Linkup)"]
+    ESA --> MCP2["📡 MCP Server<br/>(Exa)"]
+    PSA --> MCP3["📡 MCP Server<br/>(Perplexity)"]
+    FSA --> MCP4["📡 MCP Server<br/>(Firecrawl)"]
+    
+    %% Analysis Agents
+    NA --> SUA["📄 Summarization<br/>Agent"]
+    NA --> RA["🧭 Reasoning<br/>Agent"]
+    
+    %% Data Persistence
+    NA --> DB
+    NA --> FS["📁 File Storage<br/>(Artifacts)"]
+    
+    %% LLM Integration
+    TDA --> LLM["🤖 Multi-Provider<br/>LLM Client"]
+    PA --> LLM
+    SUA --> LLM
+    RA --> LLM
+    
+    %% External APIs
+    LLM --> OpenAI["OpenAI"]
+    LLM --> Anthropic["Anthropic"]
+    LLM --> Google["Google"]
+    LLM --> XAI["xAI"]
+    
+    %% Styling
+    classDef webLayer fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef apiLayer fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef agentLayer fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef mcpLayer fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef dataLayer fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    classDef llmLayer fill:#f1f8e9,stroke:#33691e,stroke-width:2px
+    
+    class UI webLayer
+    class API,RQ apiLayer
+    class W,CB,NA,TDA,PA,SA,LSA,ESA,PSA,FSA,SUA,RA agentLayer
+    class MCP1,MCP2,MCP3,MCP4 mcpLayer
+    class DB,FS dataLayer
+    class LLM,OpenAI,Anthropic,Google,XAI llmLayer
+```
+
 ### 1. Orchestration & Coordination Layer
 - **Task Manager**: Central state machine managing research workflows
 - **Communication Bus**: Redis-based pub-sub messaging for A2A communication
@@ -28,9 +98,21 @@ The Nexus Agents system implements a hierarchical multi-agent architecture with 
 - **Reasoning Agents**: Synthesis, analysis, and evaluation
 
 ### 5. Data Persistence & Living Documents
-- **DuckDB Knowledge Base**: Lightweight, JSON-native database
+- **PostgreSQL Knowledge Base**: Production-grade database with full ACID compliance and connection pooling
+- **Research Workflow Storage**: Complete task lifecycle tracking with metadata, reports, and operation evidence
 - **File Storage**: Binary files stored on disk with metadata tracking
 - **Artifact Generation**: Multiple output formats (Markdown, PDF, CSV, dashboards)
+
+#### PostgreSQL Architecture
+
+The system uses **persistent connection pooling** for robust concurrent access:
+
+- **Connection pooling**: Managed pool of 5-20 persistent connections for optimal performance
+- **Full concurrency**: Multiple processes, agents, and API requests can operate simultaneously
+- **ACID compliance**: Proper transaction isolation and data consistency guarantees
+- **Research workflow tracking**: Complete task lifecycle from creation to final report generation
+
+This architecture enables stable multi-agent concurrent operations with proper data isolation and consistency.
 
 ## 🚀 Features
 
@@ -60,11 +142,14 @@ cd nexus-agents
 # Install Python dependencies
 uv sync
 
+# Start PostgreSQL and Redis with Docker Compose
+docker compose up -d
+
 # Copy environment variables
 cp .env.example .env
 # Edit .env and add your API keys
 
-# Start all services (Redis, API, Web UI)
+# Start all services (API, Web UI)
 ./scripts/start_dev.sh
 
 # Access the services:
@@ -180,254 +265,107 @@ DUCKDB_PATH=./data/nexus.db
 STORAGE_PATH=./data/storage
 ```
 
-### LLM Configuration
+## 🚀 Installation & Setup
 
-The system supports two-model configuration:
-- **Reasoning Model**: More capable model for complex analysis (e.g., GPT-4, Claude-3.5-Sonnet)
-- **Task Model**: Lightweight model for routine tasks (e.g., GPT-3.5-turbo, Claude-3-Haiku)
+### Prerequisites
+- **Python 3.12+**
+- **Redis server** (for task queue and messaging)
+- **Node.js** (for MCP servers)
 
-## 🎯 Usage
+### Quick Start
 
-### Basic Usage
+1. **Clone and setup**:
+   ```bash
+   git clone <repository-url>
+   cd nexus-agents
+   uv sync
+   ```
 
-```python
-import asyncio
-from src.nexus_agents import NexusAgents
-from src.llm import LLMClient, LLMConfig, LLMProvider
-from src.orchestration.communication_bus import CommunicationBus
-from src.config.search_providers import SearchProvidersConfig
+2. **Install MCP servers**:
+   ```bash
+   ./scripts/setup_mcp_servers.sh
+   ```
 
-async def main():
-    # Configure LLM
-    reasoning_config = LLMConfig(
-        provider=LLMProvider.OPENAI,
-        model_name="gpt-4",
-        api_key="your_openai_key"
-    )
-    
-    task_config = LLMConfig(
-        provider=LLMProvider.OPENAI,
-        model_name="gpt-3.5-turbo",
-        api_key="your_openai_key"
-    )
-    
-    llm_client = LLMClient(
-        reasoning_config=reasoning_config,
-        task_config=task_config
-    )
-    
-    # Create system components
-    communication_bus = CommunicationBus()
-    search_config = SearchProvidersConfig()
-    
-    # Initialize Nexus Agents
-    nexus = NexusAgents(
-        llm_client=llm_client,
-        communication_bus=communication_bus,
-        search_providers_config=search_config,
-        duckdb_path="./data/nexus.db",
-        storage_path="./data/storage"
-    )
-    
-    # Start the system
-    await nexus.start()
-    
-    # Conduct research
-    research_query = "What are the latest developments in quantum computing?"
-    results = await nexus.conduct_research(research_query)
-    
-    print(f"Research completed: {results}")
+3. **Configure API keys** (create `.env` file):
+   ```bash
+   # Required for LLM operations
+   OPENAI_API_KEY=sk-your_openai_key
+   
+   # Required for search providers  
+   FIRECRAWL_API_KEY=fc-your_firecrawl_key
+   EXA_API_KEY=your_exa_key
+   PERPLEXITY_API_KEY=pplx-your_perplexity_key
+   LINKUP_API_KEY=your_linkup_key
+   ```
 
-if __name__ == "__main__":
-    asyncio.run(main())
+4. **Start the system**:
+   ```bash
+   ./scripts/start_dev_full.sh
+   ```
 
-## 🔍 Live Search Workflow with Real API Keys
+## 🌐 Web Interface Usage
 
-To test and use the system with actual search capabilities, set up your API keys:
+The system is designed to be used through its web interface:
 
-### Step 1: Configure API Keys
+- **Web UI**: http://localhost:12001
+- **API Backend**: http://localhost:12000
 
-```bash
-# Set your real API keys for MCP servers
-export FIRECRAWL_API_KEY="fc-your_actual_firecrawl_key"
-export EXA_API_KEY="your_actual_exa_key"
-export PERPLEXITY_API_KEY="pplx-your_actual_perplexity_key"
-export LINKUP_API_KEY="your_actual_linkup_key"
-export OPENAI_API_KEY="sk-your_actual_openai_key"
-```
+### Creating Research Tasks
 
-### Step 2: Run Live Search Tests
+1. **Open the web interface** in your browser
+2. **Enter your research topic** in the input field
+3. **Select research mode**:
+   - **Single**: One-time research task
+   - **Continuous**: Ongoing research with updates
+4. **Click "Start Research"** to begin
+5. **Monitor progress** in real-time:
+   - Topic decomposition phase
+   - Research planning phase
+   - Multi-provider search execution
+   - Summarization and analysis
+
+### Features
+
+- ✅ **Real-time Updates**: Task status updates automatically every 5 seconds
+- ✅ **Progress Tracking**: Visual progress through research phases
+- ✅ **Multi-provider Search**: Simultaneous searches across 4 providers
+- ✅ **Rich Results**: View summaries, insights, and generated artifacts
+- ✅ **Loading States**: Clear visual feedback during processing
+- ✅ **Error Handling**: Graceful handling of API failures
+
+### Development Mode
+
+For development and debugging:
 
 ```bash
-# Test live search functionality with real API calls
-uv run python test_live_search_workflow.py
+# View logs
+tail -f logs/worker.log
+
+# Restart system cleanly
+rm logs/worker.log && ./scripts/stop_dev.sh --all && ./scripts/start_dev_full.sh
+
+# Check system status
+curl http://localhost:12000/health
 ```
 
-### Step 3: Use Live Search in Code
+## 🔍 Search Providers
 
-```python
-import asyncio
-from src.mcp_client import MCPClient
+The system integrates with multiple search providers through the Model Context Protocol (MCP):
 
-async def live_search_example():
-    """Example of using live search capabilities."""
-    
-    # Initialize MCP client
-    mcp_client = MCPClient()
-    
-    # Example 1: Web scraping with Firecrawl
-    print("🔥 Scraping web page...")
-    result = await mcp_client.scrape_url("https://example.com")
-    print(f"Scraped content: {result}")
-    
-    # Example 2: Web search with Firecrawl
-    print("🔍 Searching the web...")
-    search_result = await mcp_client.search_web("AI latest news 2024", "firecrawl")
-    print(f"Search results: {search_result}")
-    
-    # Example 3: Research search with Exa
-    print("📚 Research search...")
-    research_result = await mcp_client.search_web("machine learning papers", "exa")
-    print(f"Research results: {research_result}")
+- **🌐 Linkup**: Web search capabilities
+- **🔬 Exa**: Semantic search and research papers
+- **🧠 Perplexity**: AI-powered search and analysis
+- **🕷️ Firecrawl**: Web scraping and content extraction
 
-if __name__ == "__main__":
-    asyncio.run(live_search_example())
-
-### Step 4: Full Research Workflow
-
-```python
-import asyncio
-from src.llm.client import LLMClient
-from src.communication.bus import CommunicationBus
-from src.agents.nexus import NexusAgents
-from src.search.providers_config import SearchProvidersConfig
-
-async def real_research_workflow():
-    """Complete research workflow with live API calls."""
-    
-    # Initialize system with real API access
-    llm_client = LLMClient()
-    communication_bus = CommunicationBus()
-    search_config = SearchProvidersConfig()
-    
-    nexus = NexusAgents(
-        llm_client=llm_client,
-        communication_bus=communication_bus,
-        search_providers_config=search_config,
-        duckdb_path="./data/nexus.db",
-        storage_path="./data/storage"
-    )
-    
-    await nexus.start()
-    
-    # Perform live research with multiple sources
-    research_topics = [
-        "renewable energy trends 2024",
-        "artificial intelligence breakthroughs",
-        "quantum computing applications"
-    ]
-    
-    for topic in research_topics:
-        print(f"\n🔍 Researching: {topic}")
-        
-        # Use MCP servers for diverse search results
-        firecrawl_results = await nexus.mcp_client.search_web(topic, "firecrawl")
-        exa_results = await nexus.mcp_client.search_web(topic, "exa")
-        
-        print(f"✅ Found {len(firecrawl_results)} Firecrawl results")
-        print(f"✅ Found {len(exa_results)} Exa results")
-        
-        # Process and analyze results with LLM
-        # (Implementation depends on your specific research needs)
-
-if __name__ == "__main__":
-    asyncio.run(real_research_workflow())
-
-## 🔧 Testing
-
-Run the test suite to verify installation:
-
-```bash
-# Test system initialization
-uv run python test_system_initialization.py
-
-# Test live search functionality with real API calls
-# (Requires API keys to be set in environment)
-uv run python test_live_search_workflow.py
-
-# Test research workflow (basic components)
-uv run python test_research_workflow.py
-
-# Test MCP server integration
-uv run python test_official_mcp_integration.py
-
-# Test individual components
-uv run python -m pytest tests/
-```
-
-### Test Levels
-
-1. **Basic Tests** - System initialization and component setup (no API keys required)
-2. **Integration Tests** - MCP server handshakes and tool discovery (dummy keys work)
-3. **Live Tests** - Real search operations and scraping (requires valid API keys)
-
-⚠️ **Note**: Live tests require actual API keys. Set them in your environment or they will be skipped.
-
-## 🔍 MCP Integration
-
-The system uses proper Model Context Protocol (MCP) implementation with official servers:
-
-### Available MCP Servers
-
-1. **Linkup MCP Server** (Python-based)
-   - Command: `uv run python -m mcp_search_linkup`
-   - Purpose: Web search capabilities
-
-2. **Exa MCP Server** (Node.js-based)
-   - Command: `uv run node external_mcp_servers/exa-mcp/.smithery/index.cjs`
-   - Purpose: Semantic search
-
-3. **Perplexity MCP Server** (Node.js-based, Official)
-   - Command: `uv run node external_mcp_servers/perplexity-official-mcp/perplexity-ask/dist/index.js`
-   - Purpose: AI-powered search
-
-4. **Firecrawl MCP Server** (Node.js-based)
-   - Command: `uv run node external_mcp_servers/firecrawl-mcp/dist/index.js`
-   - Purpose: Web scraping and content extraction
-
-### MCP Client Implementation
-
-The system includes two MCP client implementations:
-
-- **SimpleMCPClient**: On-demand connections (recommended)
-- **MCPClient**: Persistent connections (experimental)
+All providers are automatically configured and managed by the system.
 
 ## 📊 Data Storage
 
-### DuckDB Knowledge Base
-
-The system uses DuckDB for its native JSON support and lightweight deployment:
-
-```sql
--- Research tasks table
-CREATE TABLE research_tasks (
-    id TEXT PRIMARY KEY,
-    query TEXT NOT NULL,
-    status TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    metadata JSON
-);
-
--- Search results table
-CREATE TABLE search_results (
-    id TEXT PRIMARY KEY,
-    task_id TEXT,
-    provider TEXT,
-    query TEXT,
-    results JSON,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
+The system uses **DuckDB** for lightweight, JSON-native data storage:
+- Research tasks and status tracking
+- Search results and analysis
+- Generated artifacts and reports
+- No external database setup required
 
 ### File Storage
 
@@ -446,6 +384,63 @@ The system supports continuous research modes:
 4. **Living Documents**: Auto-updating research artifacts
 
 ## 🛠️ Development
+
+### Development Scripts
+
+The project includes comprehensive development scripts for managing the full system:
+
+#### Starting the System
+
+```bash
+# Start the complete system (API + Worker + Web UI + Redis)
+./scripts/start_dev_full.sh
+
+# Start just the API and Worker
+./scripts/start_dev.sh
+
+# Start minimal setup (API only)
+./scripts/start_dev_simple.sh
+```
+
+#### Stopping the System
+
+```bash
+# Stop all services
+./scripts/stop_dev.sh --all
+
+# Stop specific services (will detect and stop running processes)
+./scripts/stop_dev.sh
+```
+
+#### Standardized Restart Procedure
+
+For worker debugging and system restarts, use this standard workflow:
+
+```bash
+# Clean restart with fresh logs
+rm logs/worker.log && ./scripts/stop_dev.sh --all && ./scripts/start_dev_full.sh
+```
+
+This ensures:
+- All services are cleanly stopped
+- Fresh log files are created
+- Complete system is restarted in the correct order
+- Redis, API, Worker, and Web UI are all running
+
+#### Service URLs
+
+When running the full development environment:
+
+- **API Backend**: http://localhost:12000
+- **API Documentation**: http://localhost:12000/docs
+- **Web UI**: http://localhost:12001
+- **Redis**: localhost:6379
+
+#### Log Files
+
+- **API Logs**: `logs/api.log`
+- **Worker Logs**: `logs/worker.log`
+- **Web UI Logs**: `logs/web.log`
 
 ### Project Structure
 

@@ -132,6 +132,21 @@ class LLMClient:
                 temperature=0.5
             )
     
+    def _get_token_param(self, model_name: str, tokens: int) -> Dict[str, int]:
+        """
+        Returns the correct token parameter based on the model name.
+        Handles the breaking change in the OpenAI API for newer models.
+        Model-specific change: o1, o3, o4 models require 'max_completion_tokens'
+        while older models (GPT-3.5, GPT-4, GPT-4o) still use 'max_tokens'.
+        """
+        # Models that require the new 'max_completion_tokens' parameter
+        new_token_models = ["o1", "o3", "o4"]
+        
+        if any(model_name.startswith(prefix) for prefix in new_token_models):
+            return {"max_completion_tokens": tokens}
+        else:
+            return {"max_tokens": tokens}
+
     def _initialize_clients(self):
         """Initialize the LLM clients for each provider."""
         # Initialize OpenAI client if needed
@@ -391,14 +406,19 @@ class LLMClient:
         if not client:
             return "Error: OpenAI client not initialized"
         
-        response = await client.chat.completions.create(
-            model=config.model_name,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=config.max_tokens,
-            temperature=config.temperature,
-            top_p=config.top_p,
+        token_params = self._get_token_param(config.model_name, config.max_tokens)
+
+        params = {
+            "model": config.model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "top_p": config.top_p,
+            **token_params,
             **config.additional_params
-        )
+        }
+        if config.temperature is not None:
+            params["temperature"] = config.temperature
+        
+        response = await client.chat.completions.create(**params)
         
         return response.choices[0].message.content
     
@@ -444,14 +464,19 @@ class LLMClient:
         if not client:
             return "Error: xAI client not initialized"
         
-        response = await client.chat.completions.create(
-            model=config.model_name,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=config.max_tokens,
-            temperature=config.temperature,
-            top_p=config.top_p,
+        token_params = self._get_token_param(config.model_name, config.max_tokens)
+
+        params = {
+            "model": config.model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "top_p": config.top_p,
+            **token_params,
             **config.additional_params
-        )
+        }
+        if config.temperature is not None:
+            params["temperature"] = config.temperature
+        
+        response = await client.chat.completions.create(**params)
         
         return response.choices[0].message.content
     
@@ -461,14 +486,19 @@ class LLMClient:
         if not client:
             return "Error: OpenRouter client not initialized"
         
-        response = await client.chat.completions.create(
-            model=config.model_name,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=config.max_tokens,
-            temperature=config.temperature,
-            top_p=config.top_p,
+        token_params = self._get_token_param(config.model_name, config.max_tokens)
+
+        params = {
+            "model": config.model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "top_p": config.top_p,
+            **token_params,
             **config.additional_params
-        )
+        }
+        if config.temperature is not None:
+            params["temperature"] = config.temperature
+        
+        response = await client.chat.completions.create(**params)
         
         return response.choices[0].message.content
     
