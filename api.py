@@ -7,7 +7,8 @@ import json
 import os
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Any
 
 import redis.asyncio as redis
 import uvicorn
@@ -15,6 +16,38 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+def detect_and_parse_json_strings(data: Any) -> Any:
+    """Recursively detect and parse JSON strings in data structures for frontend display.
+    
+    This function traverses data structures and detects string values that contain
+    valid JSON. When found, it replaces the JSON string with the parsed object
+    to enable better tree rendering in the frontend.
+    
+    IMPORTANT: This is ONLY used for API response processing, never for data storage.
+    """
+    if isinstance(data, dict):
+        return {key: detect_and_parse_json_strings(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [detect_and_parse_json_strings(item) for item in data]
+    elif isinstance(data, str):
+        # Check if string might contain JSON
+        stripped = data.strip()
+        if (stripped.startswith('{') and stripped.endswith('}')) or \
+           (stripped.startswith('[') and stripped.endswith(']')):
+            try:
+                # Try to parse as JSON
+                parsed = json.loads(stripped)
+                # Only replace if the parsed result is a dict or list (not primitive)
+                if isinstance(parsed, (dict, list)):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                # Not valid JSON, return as-is
+                pass
+        return data
+    else:
+        # Return primitive types as-is
+        return data
 
 from src.persistence.postgres_knowledge_base import PostgresKnowledgeBase
 from src.orchestration.task_manager import TaskStatus
@@ -369,7 +402,9 @@ async def get_task_operations(task_id: str):
     """Get all operations for a specific task."""
     async with get_kb() as kb:
         operations = await kb.get_task_operations(task_id)
-        return {"task_id": task_id, "operations": operations}
+        result = {"task_id": task_id, "operations": operations}
+        result = detect_and_parse_json_strings(result)
+        return result
 
 
 @app.get("/tasks/{task_id}/timeline")
@@ -377,7 +412,12 @@ async def get_task_timeline(task_id: str):
     """Get a chronological timeline of all operations and evidence for a task."""
     async with get_kb() as kb:
         timeline = await kb.get_task_timeline(task_id)
-        return {"task_id": task_id, "timeline": timeline}
+        
+        # Process JSON strings in the response for better frontend display
+        result = {"task_id": task_id, "timeline": timeline}
+        result = detect_and_parse_json_strings(result)
+        
+        return result
 
 
 @app.get("/operations/{operation_id}")
@@ -428,6 +468,9 @@ async def get_task_evidence(task_id: str):
                 ))
             }
         }
+        
+        # Process JSON strings in the response for better frontend display
+        evidence_summary = detect_and_parse_json_strings(evidence_summary)
         
         return evidence_summary
 
