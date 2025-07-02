@@ -493,33 +493,151 @@
             }
         }
         
-        // Display research report
+        // Global variable to store current report data for download
+        let currentReportData = null;
+        
+        // Display research report in modal
         function displayResearchReport(taskId, reportMarkdown) {
             const reportSection = document.getElementById(`report-${taskId}`);
             const reportContent = reportSection.querySelector('.report-content');
             
             if (reportMarkdown) {
-                let html = '<div class="alert alert-light p-3">';
+                // Store report data for download functionality
+                currentReportData = {
+                    taskId: taskId,
+                    markdown: reportMarkdown
+                };
                 
-                // Simple markdown-to-HTML conversion for basic formatting
-                const htmlContent = reportMarkdown
-                    .replace(/^### (.*$)/gim, '<h5>$1</h5>')
-                    .replace(/^## (.*$)/gim, '<h4>$1</h4>')
-                    .replace(/^# (.*$)/gim, '<h3>$1</h3>')
-                    .replace(/^\* (.*$)/gim, '<li>$1</li>')
-                    .replace(/^- (.*$)/gim, '<li>$1</li>')
-                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                    .replace(/\n\n/g, '</p><p>')
-                    .replace(/\n/g, '<br>');
-                
-                html += `<div style="max-height: 400px; overflow-y: auto;"><p>${htmlContent}</p></div>`;
-                html += `<div class="mt-2"><small class="text-muted">Report length: ${reportMarkdown.length} characters</small></div>`;
-                html += '</div>';
+                // Create a button to open the modal instead of inline content
+                const html = `
+                    <div class="alert alert-info p-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>Research Report Available</strong>
+                                <div class="mt-1">
+                                    <small class="text-muted">Report length: ${reportMarkdown.length} characters</small>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-primary" onclick="openReportModal('${taskId}')">
+                                <i class="bi bi-file-text"></i> View Full Report
+                            </button>
+                        </div>
+                    </div>
+                `;
                 
                 reportContent.innerHTML = html;
                 reportSection.style.display = 'block';
             }
+        }
+        
+        // Open report in modal
+        function openReportModal(taskId) {
+            if (!currentReportData || currentReportData.taskId !== taskId) {
+                // Fetch the report if not already loaded
+                fetch(`${API_URL}/research/tasks/${taskId}/report`)
+                    .then(response => {
+                        if (response.ok) {
+                            return response.text();
+                        }
+                        throw new Error('Report not found');
+                    })
+                    .then(reportMarkdown => {
+                        currentReportData = { taskId: taskId, markdown: reportMarkdown };
+                        showReportInModal(reportMarkdown, taskId);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching report:', error);
+                        alert('Report not available yet. Please try again later.');
+                    });
+            } else {
+                showReportInModal(currentReportData.markdown, taskId);
+            }
+        }
+        
+        // Show report content in modal
+        function showReportInModal(reportMarkdown, taskId) {
+            // Convert markdown to HTML with better formatting
+            const htmlContent = reportMarkdown
+                .replace(/^### (.*$)/gim, '<h5 class="mt-4 mb-2">$1</h5>')
+                .replace(/^## (.*$)/gim, '<h4 class="mt-4 mb-3">$1</h4>')
+                .replace(/^# (.*$)/gim, '<h3 class="mt-4 mb-3">$1</h3>')
+                .replace(/^\* (.*$)/gim, '<li>$1</li>')
+                .replace(/^- (.*$)/gim, '<li>$1</li>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`([^`]+)`/g, '<code class="bg-light px-1 rounded">$1</code>')
+                .replace(/\n\n/g, '</p><p class="mb-3">')
+                .replace(/\n/g, '<br>');
+            
+            // Update modal content
+            document.getElementById('researchReportModalLabel').textContent = `Research Report - Task ${taskId.substring(0, 8)}`;
+            document.getElementById('researchReportContent').innerHTML = `<div class="report-content"><p class="mb-3">${htmlContent}</p></div>`;
+            document.getElementById('reportMetadata').textContent = `Report length: ${reportMarkdown.length} characters | Generated: ${new Date().toLocaleString()}`;
+            
+            // Show the modal using Bootstrap data attributes
+            const modalElement = document.getElementById('researchReportModal');
+            modalElement.classList.add('show');
+            modalElement.style.display = 'block';
+            modalElement.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('modal-open');
+            
+            // Add backdrop
+            if (!document.querySelector('.modal-backdrop')) {
+                const backdrop = document.createElement('div');
+                backdrop.className = 'modal-backdrop fade show';
+                backdrop.onclick = closeModal;
+                document.body.appendChild(backdrop);
+            }
+        }
+        
+        // Close modal function
+        function closeModal() {
+            const modalElement = document.getElementById('researchReportModal');
+            const backdrop = document.querySelector('.modal-backdrop');
+            
+            modalElement.classList.remove('show');
+            modalElement.style.display = 'none';
+            modalElement.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove('modal-open');
+            
+            if (backdrop) {
+                backdrop.remove();
+            }
+        }
+        
+        // Add event listeners for modal close
+        document.addEventListener('DOMContentLoaded', function() {
+            const modal = document.getElementById('researchReportModal');
+            const closeButtons = modal.querySelectorAll('[data-bs-dismiss="modal"]');
+            
+            closeButtons.forEach(button => {
+                button.addEventListener('click', closeModal);
+            });
+            
+            // Close on escape key
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && modal.style.display === 'block') {
+                    closeModal();
+                }
+            });
+        });
+        
+        // Download report as markdown file
+        function downloadReport() {
+            if (!currentReportData) {
+                alert('No report available for download.');
+                return;
+            }
+            
+            const blob = new Blob([currentReportData.markdown], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `research-report-${currentReportData.taskId.substring(0, 8)}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
         
         // Toggle evidence display for a task
@@ -775,8 +893,8 @@
                     lastTaskStates[taskId] = currentStatus;
                 }
                 
-                // Update the display
-                displayTasks(tasks);
+                // Update the display  
+                refreshTasks();
                 
                 // Adjust polling frequency based on activity
                 if (!hasActiveTasks) {
@@ -863,5 +981,27 @@
         
         // Smart polling started in DOMContentLoaded
     </script>
+    
+    <!-- Research Report Modal -->
+    <div class="modal fade" id="researchReportModal" tabindex="-1" aria-labelledby="researchReportModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="researchReportModalLabel">Research Report</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                    <div id="researchReportContent"></div>
+                </div>
+                <div class="modal-footer">
+                    <div class="me-auto">
+                        <small class="text-muted" id="reportMetadata"></small>
+                    </div>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="downloadReport()">Download Report</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
