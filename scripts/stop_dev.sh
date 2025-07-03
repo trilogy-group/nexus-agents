@@ -51,14 +51,23 @@ fi
 
 # Stop Redis automatically
 echo "Stopping Redis..."
-if docker ps | grep "nexus-agents-redis-1\|nexus-redis" >/dev/null 2>&1; then
+if docker ps | grep "nexus-agents-redis-1" >/dev/null 2>&1; then
     echo "Stopping Redis Docker container..."
-    docker compose stop redis >/dev/null 2>&1 || docker stop nexus-redis >/dev/null 2>&1 || true
+    docker compose stop redis >/dev/null 2>&1 || true
 elif pgrep redis-server >/dev/null 2>&1; then
     echo "Stopping local Redis server..."
     redis-cli shutdown >/dev/null 2>&1
 else
     echo "No Redis instance found"
+fi
+
+# Stop PostgreSQL automatically
+echo "Stopping PostgreSQL..."
+if docker ps | grep "nexus-agents-postgres-1" >/dev/null 2>&1; then
+    echo "Stopping PostgreSQL Docker container..."
+    docker compose stop postgres >/dev/null 2>&1 || true
+else
+    echo "No PostgreSQL container found"
 fi
 
 echo -e "\n${GREEN} All services stopped!${NC}"
