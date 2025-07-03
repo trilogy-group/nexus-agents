@@ -212,6 +212,7 @@ external_mcp_servers/*/venv/
 external_mcp_servers/*/venv*
 
 # IDE and editor files
+.windsurf/
 .vscode/
 .idea/
 *.swp
@@ -224,3 +225,4 @@ external_mcp_servers/*/
 
 # Development files
 .dev_pids
+notes.txt
