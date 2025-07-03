@@ -20,8 +20,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount the static files
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Mount the static files - serve from the new frontend directory
+app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")
+#app.mount("/", StaticFiles(directory="static", html=True), name="frontend")
 
 
 def main():

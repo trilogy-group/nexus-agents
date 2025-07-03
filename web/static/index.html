@@ -5,10 +5,207 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nexus Agents</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script type="module" src="https://unpkg.com/@alenaksu/json-viewer@2.0.0/dist/json-viewer.bundle.js"></script>
     <style>
+        /* CSS Variables for theming */
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #212529;
+            --card-bg: #ffffff;
+            --border-color: #dee2e6;
+            --muted-text: #6c757d;
+            --light-bg: #f8f9fa;
+            --input-bg: #ffffff;
+            --input-border: #ced4da;
+            --btn-primary-bg: #0d6efd;
+            --btn-primary-border: #0d6efd;
+            --btn-secondary-bg: #6c757d;
+            --btn-secondary-border: #6c757d;
+            --modal-bg: #ffffff;
+            --modal-header-bg: #ffffff;
+        }
+        
+        [data-theme="dark"] {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --card-bg: #1e1e1e;
+            --border-color: #404040;
+            --muted-text: #a0a0a0;
+            --light-bg: #2a2a2a;
+            --input-bg: #2a2a2a;
+            --input-border: #404040;
+            --btn-primary-bg: #0d6efd;
+            --btn-primary-border: #0d6efd;
+            --btn-secondary-bg: #6c757d;
+            --btn-secondary-border: #6c757d;
+            --modal-bg: #1e1e1e;
+            --modal-header-bg: #2a2a2a;
+        }
+        
         body {
             padding-top: 2rem;
             padding-bottom: 2rem;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+        }
+        
+        /* Apply theme variables to components */
+        .card {
+            background-color: var(--card-bg) !important;
+            border-color: var(--border-color) !important;
+            color: var(--text-color) !important;
+        }
+        
+        .form-control, .form-select {
+            background-color: var(--input-bg) !important;
+            border-color: var(--input-border) !important;
+            color: var(--text-color) !important;
+        }
+        
+        .form-control:focus, .form-select:focus {
+            background-color: var(--input-bg) !important;
+            border-color: var(--btn-primary-bg) !important;
+            color: var(--text-color) !important;
+            box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25) !important;
+        }
+        
+        .btn-primary {
+            background-color: var(--btn-primary-bg) !important;
+            border-color: var(--btn-primary-border) !important;
+        }
+        
+        .btn-secondary {
+            background-color: var(--btn-secondary-bg) !important;
+            border-color: var(--btn-secondary-border) !important;
+        }
+        
+        /* Fix colored-text-on-transparent buttons for dark mode */
+        .btn-outline-primary {
+            color: var(--btn-primary-bg) !important;
+            border-color: var(--btn-primary-bg) !important;
+            background-color: transparent !important;
+        }
+        
+        .btn-outline-primary:hover {
+            background-color: var(--btn-primary-bg) !important;
+            color: white !important;
+        }
+        
+        .btn-outline-danger {
+            color: #dc3545 !important;
+            border-color: #dc3545 !important;
+            background-color: transparent !important;
+        }
+        
+        [data-theme="dark"] .btn-outline-danger {
+            color: #ff6b6b !important;
+            border-color: #ff6b6b !important;
+        }
+        
+        .btn-outline-danger:hover {
+            background-color: #dc3545 !important;
+            color: white !important;
+        }
+        
+        [data-theme="dark"] .btn-outline-danger:hover {
+            background-color: #ff6b6b !important;
+            color: white !important;
+        }
+        
+        .btn-outline-secondary {
+            color: var(--text-color) !important;
+            border-color: var(--border-color) !important;
+            background-color: transparent !important;
+        }
+        
+        .btn-outline-secondary:hover {
+            background-color: var(--btn-secondary-bg) !important;
+            color: white !important;
+        }
+        
+        /* Fix link buttons for dark mode */
+        .btn-link {
+            color: var(--btn-primary-bg) !important;
+        }
+        
+        .btn-link:hover {
+            color: var(--btn-primary-bg) !important;
+            text-decoration: underline !important;
+        }
+        
+        .modal-content {
+            background-color: var(--modal-bg) !important;
+            color: var(--text-color) !important;
+        }
+        
+        .modal-header {
+            background-color: var(--modal-header-bg) !important;
+            border-bottom-color: var(--border-color) !important;
+        }
+        
+        .modal-footer {
+            border-top-color: var(--border-color) !important;
+        }
+        
+        .text-muted {
+            color: var(--muted-text) !important;
+        }
+        
+        /* Specific card sections */
+        .card-body {
+            background-color: var(--card-bg) !important;
+            color: var(--text-color) !important;
+        }
+        
+        .card-header {
+            background-color: var(--light-bg) !important;
+            border-bottom-color: var(--border-color) !important;
+            color: var(--text-color) !important;
+        }
+        
+        /* Research evidence and agent cards */
+        .bg-light {
+            background-color: var(--light-bg) !important;
+        }
+        
+        .border {
+            border-color: var(--border-color) !important;
+        }
+        
+        /* JSON viewer container styling */
+        json-viewer {
+            background-color: var(--card-bg) !important;
+            color: var(--text-color) !important;
+            border: 1px solid var(--border-color) !important;
+            border-radius: 0.375rem !important;
+            padding: 0.75rem !important;
+        }
+        
+        /* JSON viewer theming using the actual CSS variables the component uses */
+        :root json-viewer {
+            --string-color: #032f62 !important;        /* Much darker blue for strings in light mode */
+            --number-color: #0969da !important;        /* Blue for numbers */
+            --boolean-color: #6f42c1 !important;       /* Darker purple for booleans */
+            --null-color: #586069 !important;          /* Darker gray for null */
+            --key-color: #0550ae !important;           /* Darker blue for keys */
+        }
+        
+        /* JSON viewer dark mode */
+        [data-theme="dark"] json-viewer {
+            --string-color: #a5d6ff !important;        /* Light blue for strings in dark mode */
+            --number-color: #79c0ff !important;        /* Light blue for numbers */
+            --boolean-color: #d2a8ff !important;       /* Light purple for booleans */
+            --null-color: #8b949e !important;          /* Light gray for null */
+            --key-color: #79c0ff !important;           /* Light blue for keys */
+        }
+        
+        /* Theme switcher */
+        .theme-switcher {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1050;
         }
         .task-card {
             margin-bottom: 1rem;
@@ -51,6 +248,61 @@
         .operation-item.completed::before { background-color: #28a745; }
         .operation-item.failed::before { background-color: #dc3545; }
         .operation-item.running::before { background-color: #007bff; }
+        
+        /* Collapsible timeline cards */
+        .timeline-card {
+            border: 1px solid var(--border-color);
+            border-radius: 0.375rem;
+            margin-bottom: 0.75rem;
+            background: var(--card-bg);
+        }
+        .timeline-card-header {
+            padding: 0.75rem 1rem;
+            background-color: var(--light-bg);
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .timeline-card-header:hover {
+            background-color: var(--border-color);
+        }
+        .timeline-card-body {
+            padding: 1rem;
+            display: none;
+            background: var(--card-bg);
+        }
+        .timeline-card.expanded .timeline-card-body {
+            display: block;
+        }
+        .timeline-card-toggle {
+            transition: transform 0.2s;
+        }
+        .timeline-card.expanded .timeline-card-toggle {
+            transform: rotate(90deg);
+        }
+        
+        /* JSON tree styles */
+        .json-tree {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+            line-height: 1.4;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 0.25rem;
+            padding: 0.75rem;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .json-key { color: #0066cc; font-weight: bold; }
+        .json-string { color: #009900; }
+        .json-number { color: #cc6600; }
+        .json-boolean { color: #9900cc; }
+        .json-null { color: #999999; }
+        .json-bracket { color: #666666; font-weight: bold; }
+        .json-indent { margin-left: 1.5rem; }
         
         .evidence-item {
             margin: 0.5rem 0;
@@ -99,6 +351,13 @@
     </style>
 </head>
 <body>
+    <!-- Theme Switcher -->
+    <div class="theme-switcher">
+        <button class="btn btn-outline-secondary" onclick="toggleTheme()" id="themeToggle">
+            <span id="themeIcon">🌙</span>
+        </button>
+    </div>
+    
     <div class="container">
         <h1 class="mb-4">Nexus Agents</h1>
         
@@ -240,6 +499,9 @@
             const tasksContainer = document.getElementById('tasks-container');
             
             try {
+                // Preserve timeline card states before clearing DOM
+                const currentStates = Object.assign({}, timelineCardStates);
+                
                 // Fetch all tasks from the API
                 const response = await fetch(`${API_URL}/tasks`);
                 
@@ -312,13 +574,13 @@
                     buttonContainer.className = 'mb-3';
                     
                     const evidenceButton = document.createElement('button');
-                    evidenceButton.className = 'btn btn-outline-primary btn-sm me-2';
+                    evidenceButton.className = 'btn btn-primary btn-sm me-2';
                     evidenceButton.onclick = () => toggleEvidence(task.task_id, evidenceButton);
                     buttonContainer.appendChild(evidenceButton);
                     
                     // Add delete button
                     const deleteButton = document.createElement('button');
-                    deleteButton.className = 'btn btn-outline-danger btn-sm';
+                    deleteButton.className = 'btn btn-danger btn-sm';
                     deleteButton.innerHTML = '<i class="fas fa-trash"></i> Delete Task';
                     deleteButton.onclick = () => deleteTask(task.task_id, task.title);
                     buttonContainer.appendChild(deleteButton);
@@ -381,6 +643,13 @@
                     // Load detailed workflow information for this task
                     loadTaskWorkflowDetails(task.task_id);
                 }
+                
+                // Restore preserved timeline card states after DOM is fully updated
+                setTimeout(() => {
+                    timelineCardStates = currentStates;
+                    restoreTimelineCardStates();
+                }, 100); // Small delay to ensure all async operations complete
+                
             } catch (error) {
                 console.error('Error fetching tasks:', error);
                 
@@ -493,33 +762,151 @@
             }
         }
         
-        // Display research report
+        // Global variable to store current report data for download
+        let currentReportData = null;
+        
+        // Display research report in modal
         function displayResearchReport(taskId, reportMarkdown) {
             const reportSection = document.getElementById(`report-${taskId}`);
             const reportContent = reportSection.querySelector('.report-content');
             
             if (reportMarkdown) {
-                let html = '<div class="alert alert-light p-3">';
+                // Store report data for download functionality
+                currentReportData = {
+                    taskId: taskId,
+                    markdown: reportMarkdown
+                };
                 
-                // Simple markdown-to-HTML conversion for basic formatting
-                const htmlContent = reportMarkdown
-                    .replace(/^### (.*$)/gim, '<h5>$1</h5>')
-                    .replace(/^## (.*$)/gim, '<h4>$1</h4>')
-                    .replace(/^# (.*$)/gim, '<h3>$1</h3>')
-                    .replace(/^\* (.*$)/gim, '<li>$1</li>')
-                    .replace(/^- (.*$)/gim, '<li>$1</li>')
-                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                    .replace(/\n\n/g, '</p><p>')
-                    .replace(/\n/g, '<br>');
-                
-                html += `<div style="max-height: 400px; overflow-y: auto;"><p>${htmlContent}</p></div>`;
-                html += `<div class="mt-2"><small class="text-muted">Report length: ${reportMarkdown.length} characters</small></div>`;
-                html += '</div>';
+                // Create a button to open the modal instead of inline content
+                const html = `
+                    <div class="alert alert-info p-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>Research Report Available</strong>
+                                <div class="mt-1">
+                                    <small class="text-muted">Report length: ${reportMarkdown.length} characters</small>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-primary" onclick="openReportModal('${taskId}')">
+                                <i class="bi bi-file-text"></i> View Full Report
+                            </button>
+                        </div>
+                    </div>
+                `;
                 
                 reportContent.innerHTML = html;
                 reportSection.style.display = 'block';
             }
+        }
+        
+        // Open report in modal
+        function openReportModal(taskId) {
+            if (!currentReportData || currentReportData.taskId !== taskId) {
+                // Fetch the report if not already loaded
+                fetch(`${API_URL}/research/tasks/${taskId}/report`)
+                    .then(response => {
+                        if (response.ok) {
+                            return response.text();
+                        }
+                        throw new Error('Report not found');
+                    })
+                    .then(reportMarkdown => {
+                        currentReportData = { taskId: taskId, markdown: reportMarkdown };
+                        showReportInModal(reportMarkdown, taskId);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching report:', error);
+                        alert('Report not available yet. Please try again later.');
+                    });
+            } else {
+                showReportInModal(currentReportData.markdown, taskId);
+            }
+        }
+        
+        // Show report content in modal
+        function showReportInModal(reportMarkdown, taskId) {
+            // Convert markdown to HTML with better formatting
+            const htmlContent = reportMarkdown
+                .replace(/^### (.*$)/gim, '<h5 class="mt-4 mb-2">$1</h5>')
+                .replace(/^## (.*$)/gim, '<h4 class="mt-4 mb-3">$1</h4>')
+                .replace(/^# (.*$)/gim, '<h3 class="mt-4 mb-3">$1</h3>')
+                .replace(/^\* (.*$)/gim, '<li>$1</li>')
+                .replace(/^- (.*$)/gim, '<li>$1</li>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`([^`]+)`/g, '<code class="bg-light px-1 rounded">$1</code>')
+                .replace(/\n\n/g, '</p><p class="mb-3">')
+                .replace(/\n/g, '<br>');
+            
+            // Update modal content
+            document.getElementById('researchReportModalLabel').textContent = `Research Report - Task ${taskId.substring(0, 8)}`;
+            document.getElementById('researchReportContent').innerHTML = `<div class="report-content"><p class="mb-3">${htmlContent}</p></div>`;
+            document.getElementById('reportMetadata').textContent = `Report length: ${reportMarkdown.length} characters | Generated: ${new Date().toLocaleString()}`;
+            
+            // Show the modal using Bootstrap data attributes
+            const modalElement = document.getElementById('researchReportModal');
+            modalElement.classList.add('show');
+            modalElement.style.display = 'block';
+            modalElement.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('modal-open');
+            
+            // Add backdrop
+            if (!document.querySelector('.modal-backdrop')) {
+                const backdrop = document.createElement('div');
+                backdrop.className = 'modal-backdrop fade show';
+                backdrop.onclick = closeModal;
+                document.body.appendChild(backdrop);
+            }
+        }
+        
+        // Close modal function
+        function closeModal() {
+            const modalElement = document.getElementById('researchReportModal');
+            const backdrop = document.querySelector('.modal-backdrop');
+            
+            modalElement.classList.remove('show');
+            modalElement.style.display = 'none';
+            modalElement.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove('modal-open');
+            
+            if (backdrop) {
+                backdrop.remove();
+            }
+        }
+        
+        // Add event listeners for modal close
+        document.addEventListener('DOMContentLoaded', function() {
+            const modal = document.getElementById('researchReportModal');
+            const closeButtons = modal.querySelectorAll('[data-bs-dismiss="modal"]');
+            
+            closeButtons.forEach(button => {
+                button.addEventListener('click', closeModal);
+            });
+            
+            // Close on escape key
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && modal.style.display === 'block') {
+                    closeModal();
+                }
+            });
+        });
+        
+        // Download report as markdown file
+        function downloadReport() {
+            if (!currentReportData) {
+                alert('No report available for download.');
+                return;
+            }
+            
+            const blob = new Blob([currentReportData.markdown], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `research-report-${currentReportData.taskId.substring(0, 8)}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
         
         // Toggle evidence display for a task
@@ -622,62 +1009,147 @@
             return html + buildTimelineDisplay(timeline) + '</div>';
         }
         
-        // Build timeline display HTML
+        // Theme management
+        function initializeTheme() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            setTheme(savedTheme);
+        }
+        
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            setTheme(newTheme);
+        }
+        
+        function setTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('theme', theme);
+            
+            // Update theme icon
+            const themeIcon = document.getElementById('themeIcon');
+            if (themeIcon) {
+                themeIcon.textContent = theme === 'light' ? '🌙' : '☀️';
+            }
+            
+            // Recreate all JSON viewers to properly apply theme
+            const jsonViewers = document.querySelectorAll('json-viewer');
+            jsonViewers.forEach(viewer => {
+                const data = viewer.getAttribute('data');
+                const viewerId = viewer.getAttribute('id');
+                if (data && viewerId) {
+                    // Create new json-viewer element
+                    const newViewer = document.createElement('json-viewer');
+                    newViewer.setAttribute('id', viewerId);
+                    newViewer.setAttribute('data', data);
+                    newViewer.setAttribute('theme', theme);
+                    
+                    // Replace the old viewer with the new one
+                    viewer.parentNode.replaceChild(newViewer, viewer);
+                }
+            });
+        }
+        
+        // JSON tree rendering function using json-viewer with theme support
+        function renderJsonTree(obj) {
+            const viewerId = 'json-viewer-' + Math.random().toString(36).substr(2, 9);
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+            return `<json-viewer id="${viewerId}" data='${JSON.stringify(obj)}' theme="${currentTheme}"></json-viewer>`;
+        }
+        
+        // Global state for timeline card expansion
+        let timelineCardStates = {};
+        
+        // Toggle timeline card expansion
+        function toggleTimelineCard(cardId) {
+            const card = document.getElementById(cardId);
+            if (card) {
+                const isExpanded = card.classList.toggle('expanded');
+                timelineCardStates[cardId] = isExpanded;
+                
+                // If expanding, expand all JSON viewers in this card
+                if (isExpanded) {
+                    setTimeout(() => {
+                        const jsonViewers = card.querySelectorAll('json-viewer');
+                        jsonViewers.forEach(viewer => {
+                            if (viewer.expandAll && typeof viewer.expandAll === 'function') {
+                                viewer.expandAll();
+                            }
+                        });
+                    }, 50); // Small delay to ensure DOM is rendered
+                }
+            }
+        }
+        
+        // Restore timeline card states after DOM update
+        function restoreTimelineCardStates() {
+            for (const [cardId, isExpanded] of Object.entries(timelineCardStates)) {
+                const card = document.getElementById(cardId);
+                if (card && isExpanded) {
+                    card.classList.add('expanded');
+                }
+            }
+        }
+        
+        // Build timeline display HTML with collapsible cards
         function buildTimelineDisplay(timeline) {
-            if (timeline.length === 0) {
+            if (!timeline || timeline.length === 0) {
                 return '<p class="text-muted">No research operations recorded yet.</p>';
             }
             
             let html = `
                 <h6 class="mt-4 mb-3">Research Timeline</h6>
-                <div class="operation-timeline">
+                <div class="timeline-container">
             `;
             
-            for (const operation of timeline) {
+            timeline.forEach((operation, index) => {
                 const statusClass = operation.status || 'pending';
-                const duration = operation.duration_ms ? `${operation.duration_ms}ms` : 'N/A';
+                const durationSeconds = operation.duration_ms ? (operation.duration_ms / 1000).toFixed(1) : 'N/A';
+                const cardId = `timeline-card-${index}`;
+                
+                // Create status indicator with color
+                const statusIndicator = {
+                    'completed': '✅',
+                    'failed': '❌',
+                    'running': '⏳',
+                    'pending': '⏸️'
+                }[statusClass] || '●';
                 
                 html += `
-                    <div class="operation-item ${statusClass}">
-                        <div class="d-flex justify-content-between align-items-start mb-2">
-                            <div>
+                    <div class="timeline-card" id="${cardId}">
+                        <div class="timeline-card-header" onclick="toggleTimelineCard('${cardId}')">
+                            <div class="d-flex align-items-center">
+                                <span class="timeline-card-toggle me-2">▶</span>
+                                <span class="me-2">${statusIndicator}</span>
                                 <strong>${operation.operation_name}</strong>
                                 <span class="badge bg-primary ms-2">${operation.operation_type}</span>
                                 ${operation.agent_type ? `<span class="badge bg-info ms-1">${operation.agent_type}</span>` : ''}
                             </div>
                             <div class="text-end">
                                 <small class="text-muted">
-                                    Status: <span class="status-${statusClass}">${statusClass}</span><br>
-                                    Duration: ${duration}
+                                    Status: <span class="text-${statusClass === 'completed' ? 'success' : statusClass === 'failed' ? 'danger' : 'primary'}">${statusClass}</span> | 
+                                    Duration: ${durationSeconds}s
                                 </small>
                             </div>
                         </div>
+                        <div class="timeline-card-body">
                 `;
                 
                 // Add input data if available
                 if (operation.input_data) {
-                    const inputStr = JSON.stringify(operation.input_data, null, 2);
-                    const inputPreview = inputStr.length > 200 ? inputStr.substring(0, 200) + '...' : inputStr;
                     html += `
-                        <div class="mb-2">
-                            <small><strong>Input:</strong></small>
-                            <div class="evidence-preview">
-                                <small class="text-muted">${inputPreview}</small>
-                            </div>
+                        <div class="mb-3">
+                            <h6 class="text-primary">Input:</h6>
+                            <div class="json-tree">${renderJsonTree(operation.input_data)}</div>
                         </div>
                     `;
                 }
                 
                 // Add output data if available
                 if (operation.output_data) {
-                    const outputStr = JSON.stringify(operation.output_data, null, 2);
-                    const outputPreview = outputStr.length > 200 ? outputStr.substring(0, 200) + '...' : outputStr;
                     html += `
-                        <div class="mb-2">
-                            <small><strong>Output:</strong></small>
-                            <div class="evidence-preview">
-                                <small class="text-muted">${outputPreview}</small>
-                            </div>
+                        <div class="mb-3">
+                            <h6 class="text-success">Output:</h6>
+                            <div class="json-tree">${renderJsonTree(operation.output_data)}</div>
                         </div>
                     `;
                 }
@@ -685,8 +1157,9 @@
                 // Add error message if operation failed
                 if (operation.error_message) {
                     html += `
-                        <div class="alert alert-danger py-1 mb-2">
-                            <small><strong>Error:</strong> ${operation.error_message}</small>
+                        <div class="alert alert-danger mb-3">
+                            <h6 class="alert-heading">Error:</h6>
+                            <p class="mb-0">${operation.error_message}</p>
                         </div>
                     `;
                 }
@@ -694,42 +1167,51 @@
                 // Add evidence items
                 if (operation.evidence && operation.evidence.length > 0) {
                     html += `
-                        <div class="mt-2">
-                            <small><strong>Evidence (${operation.evidence.length} items):</strong></small>
+                        <div class="mb-3">
+                            <h6 class="text-info">Evidence (${operation.evidence.length} items):</h6>
                     `;
                     
-                    for (const evidence of operation.evidence) {
+                    operation.evidence.forEach((evidence, evidenceIndex) => {
                         html += `
-                            <div class="evidence-item">
-                                <div class="d-flex justify-content-between align-items-start">
-                                    <div>
-                                        <strong>${evidence.evidence_type}</strong>
-                                        ${evidence.provider ? `<span class="badge bg-secondary ms-1">${evidence.provider}</span>` : ''}
+                            <div class="card mb-2">
+                                <div class="card-header py-2">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>${evidence.evidence_type}</strong>
+                                            ${evidence.provider ? `<span class="badge bg-secondary ms-1">${evidence.provider}</span>` : ''}
+                                        </div>
+                                        ${evidence.source_url ? `<a href="${evidence.source_url}" target="_blank" class="btn btn-sm btn-outline-primary">View Source</a>` : ''}
                                     </div>
-                                    ${evidence.source_url ? `<a href="${evidence.source_url}" target="_blank" class="btn btn-sm btn-outline-primary">View Source</a>` : ''}
                                 </div>
                         `;
                         
                         if (evidence.evidence_data) {
-                            const evidenceStr = JSON.stringify(evidence.evidence_data, null, 2);
-                            const evidencePreview = evidenceStr.length > 300 ? evidenceStr.substring(0, 300) + '...' : evidenceStr;
                             html += `
-                                <div class="evidence-preview mt-1">
-                                    <small class="text-muted">${evidencePreview}</small>
+                                <div class="card-body py-2">
+                                    <div class="json-tree">${renderJsonTree(evidence.evidence_data)}</div>
                                 </div>
                             `;
                         }
                         
                         html += '</div>';
-                    }
+                    });
                     
                     html += '</div>';
                 }
                 
-                html += '</div>';
-            }
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
             
             html += '</div>';
+            
+            // Schedule state restoration for next tick to ensure DOM is updated
+            setTimeout(() => {
+                restoreTimelineCardStates();
+            }, 0);
+            
             return html;
         }
         
@@ -745,7 +1227,7 @@
             // Set up intelligent polling
             pollInterval = setInterval(() => {
                 refreshTasksIntelligently();
-            }, 15000); // Base interval: 15 seconds (much less aggressive)
+            }, 30000); // Base interval: 30 seconds
         }
         
         async function refreshTasksIntelligently() {
@@ -775,8 +1257,8 @@
                     lastTaskStates[taskId] = currentStatus;
                 }
                 
-                // Update the display
-                displayTasks(tasks);
+                // Update the display  
+                refreshTasks();
                 
                 // Adjust polling frequency based on activity
                 if (!hasActiveTasks) {
@@ -858,10 +1340,36 @@
         }
         
         document.addEventListener('DOMContentLoaded', function() {
+            // Initialize theme before loading content
+            initializeTheme();
+            
+            // Load tasks
             refreshTasks();
         });
         
         // Smart polling started in DOMContentLoaded
     </script>
+    
+    <!-- Research Report Modal -->
+    <div class="modal fade" id="researchReportModal" tabindex="-1" aria-labelledby="researchReportModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="researchReportModalLabel">Research Report</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                    <div id="researchReportContent"></div>
+                </div>
+                <div class="modal-footer">
+                    <div class="me-auto">
+                        <small class="text-muted" id="reportMetadata"></small>
+                    </div>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="downloadReport()">Download Report</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

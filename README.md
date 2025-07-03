@@ -393,13 +393,7 @@ The project includes comprehensive development scripts for managing the full sys
 
 ```bash
 # Start the complete system (API + Worker + Web UI + Redis)
-./scripts/start_dev_full.sh
-
-# Start just the API and Worker
 ./scripts/start_dev.sh
-
-# Start minimal setup (API only)
-./scripts/start_dev_simple.sh
 ```
 
 #### Stopping the System
@@ -418,7 +412,7 @@ For worker debugging and system restarts, use this standard workflow:
 
 ```bash
 # Clean restart with fresh logs
-rm logs/worker.log && ./scripts/stop_dev.sh --all && ./scripts/start_dev_full.sh
+rm logs/worker.log && ./scripts/stop_dev.sh --all && ./scripts/start_dev.sh
 ```
 
 This ensures:
