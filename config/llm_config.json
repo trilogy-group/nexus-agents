@@ -12,7 +12,7 @@
     },
     "task_model": {
         "provider": "openai",
-        "model_name": "gpt-4o",
+        "model_name": "o4-mini",
         "max_tokens": 16384,
         "temperature": 1.0,
         "top_p": 1.0,

@@ -1,9 +1,11 @@
 // Task management module
 import { ApiClient } from './api.js';
+import { DOKTaxonomyManager } from './dok-taxonomy.js';
 
 export class TaskManager {
     constructor() {
         this.apiClient = new ApiClient();
+        this.dokTaxonomyManager = new DOKTaxonomyManager();
         this.timelineCardStates = {};
         this.currentReportData = null;
         this.lastTaskStates = {};
@@ -21,6 +23,7 @@ export class TaskManager {
         const formData = new FormData(event.target);
         const title = formData.get('title');
         const description = formData.get('description');
+        const researchType = formData.get('research-type') || 'analytical_report';
         const continuousMode = formData.get('continuous-mode') === 'on';
         const interval = formData.get('interval');
         
@@ -36,11 +39,12 @@ export class TaskManager {
         submitButton.innerHTML = '<span class="loading-spinner"></span> Creating Task...';
 
         try {
+            // Pass title separately and description as research_query
             const response = await this.apiClient.post('/tasks', {
                 title: title.trim(),
-                description: description.trim(),
-                continuous_mode: continuousMode,
-                continuous_interval_hours: continuousMode ? parseInt(interval) : null
+                research_query: description.trim(),  // The inquiry/description becomes the research query
+                research_type: researchType,
+                user_id: null  // Optional field
             });
 
             if (response.ok) {
@@ -49,10 +53,14 @@ export class TaskManager {
                 
                 // Clear form
                 event.target.reset();
-                document.getElementById('interval-container').style.display = 'none';
                 
-                // Refresh tasks to show the new one
-                await this.refreshTasks();
+                // Add new task to polling manager
+                if (window.pollingManager) {
+                    window.pollingManager.addTask(result);
+                }
+                
+                // Refresh tasks after 2 seconds as requested
+                setTimeout(() => this.refreshTasks(), 2000);
             } else {
                 const error = await response.json();
                 alert(`Failed to create task: ${error.detail || 'Unknown error'}`);
@@ -104,6 +112,11 @@ export class TaskManager {
         
         html += '</div>';
         taskListContainer.innerHTML = html;
+        
+        // Initialize polling manager with current tasks
+        if (window.pollingManager) {
+            window.pollingManager.initializeWithTasks(tasks);
+        }
         
         // Load detailed workflow information after rendering
         for (const task of tasks) {
@@ -199,6 +212,9 @@ export class TaskManager {
                             <button class="btn btn-primary btn-sm me-2" onclick="window.taskManager.toggleEvidence('${task.task_id}', this)">
                                 Show Research Evidence
                             </button>
+                            <button class="btn btn-success btn-sm me-2" onclick="window.taskManager.toggleDOKTaxonomy('${task.task_id}', this)">
+                                📖 Show DOK Taxonomy
+                            </button>
                             <button class="btn btn-danger btn-sm" onclick="window.taskManager.deleteTask('${task.task_id}', '${this.escapeHtml(task.title)}')">
                                 <i class="fas fa-trash"></i> Delete Task
                             </button>
@@ -216,12 +232,51 @@ export class TaskManager {
                             Loading evidence...
                         </div>
                     </div>
+                    
+                    <!-- DOK Taxonomy container -->
+                    <div id="dok-taxonomy-${task.task_id}" style="display: none;">
+                        <div class="text-center py-2">
+                            <div class="spinner-border spinner-border-sm" role="status"></div>
+                            Loading DOK taxonomy...
+                        </div>
+                    </div>
                 </div>
             </div>
         `;
     }
 
 
+
+    async updateTaskCard(task) {
+        // Find the task card element
+        const taskCard = document.querySelector(`#task-${task.task_id}`);
+        if (!taskCard) {
+            // Task card doesn't exist, need to refresh full list
+            await this.refreshTasks();
+            return;
+        }
+        
+        // Update status badge
+        const statusBadge = taskCard.querySelector('.badge');
+        if (statusBadge) {
+            statusBadge.className = `badge ${this.getStatusBadgeClass(task.status)}`;
+            statusBadge.textContent = this.formatStatus(task.status);
+        }
+        
+        // Update metadata
+        const metadataText = taskCard.querySelector('.text-muted');
+        if (metadataText) {
+            metadataText.textContent = `Created: ${new Date(task.created_at).toLocaleString()}`;
+        }
+        
+        // If task is now completed, fetch the report
+        if (task.status === 'completed' && window.pollingManager && !window.pollingManager.completedReports.has(task.task_id)) {
+            await this.fetchAndDisplayResearchReport(task.task_id);
+        }
+        
+        // Update workflow details if needed
+        await this.loadTaskWorkflowDetails(task.task_id);
+    }
 
     renderTaskWorkflowInfo(taskId, taskDetails) {
         if (!taskDetails?.operations?.length) return '';
@@ -420,15 +475,15 @@ export class TaskManager {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             
-            const operations = await response.json();
+            const data = await response.json();
+            console.log('[Evidence] Raw API response:', data);
             
-            // Additionally fetch evidence statistics for Evidence Items and Search Providers counts
-            const evidenceResponse = await fetch(`http://localhost:12000/tasks/${taskId}/evidence`);
-            let evidenceStats = null;
-            if (evidenceResponse.ok) {
-                const evidenceData = await evidenceResponse.json();
-                evidenceStats = evidenceData.statistics;
-            }
+            // Extract operations array from response - API returns {task_id, operations}
+            const operations = data.operations || [];
+            console.log('[Evidence] Extracted operations:', operations);
+            
+            // Calculate evidence statistics from operations data
+            const evidenceStats = this.calculateEvidenceStats(operations);
             
             // Build evidence display using the timeline renderer
             const evidenceHTML = this.buildEvidenceDisplayFromOperations(operations, evidenceStats, taskId);
@@ -437,8 +492,12 @@ export class TaskManager {
             // Display executed agents section
             this.displayExecutedAgents(taskId, operations);
             
-            // Fetch and display research report
-            this.fetchAndDisplayResearchReport(taskId);
+            // Only fetch and display research report if task is completed
+            // Don't attempt to fetch reports for tasks that are still processing
+            const taskStatus = await this.getTaskStatus(taskId);
+            if (taskStatus === 'completed') {
+                this.fetchAndDisplayResearchReport(taskId);
+            }
             
             // Add event delegation for timeline card toggles
             setTimeout(() => {
@@ -588,15 +647,17 @@ export class TaskManager {
                 'pending': '⏸️'
             }[statusClass] || '●';
             
+            // Generate user-friendly names and badges
+            const { displayName, badges } = this.getOperationDisplayInfo(operation);
+            
             html += `
                 <div class="timeline-card" id="${cardId}">
                     <div class="timeline-card-header" data-card-id="${cardId}" style="cursor: pointer;">
                         <div class="d-flex align-items-center">
                             <span class="timeline-card-toggle me-2">▶</span>
                             <span class="me-2">${statusIndicator}</span>
-                            <strong>${operation.operation_name || operation.operation_type}</strong>
-                            <span class="badge bg-primary ms-2">${operation.operation_type}</span>
-                            ${operation.agent_type ? `<span class="badge bg-info ms-1">${operation.agent_type}</span>` : ''}
+                            <strong>${displayName}</strong>
+                            ${badges.join('')}
                         </div>
                         <div class="text-end">
                             <small class="text-muted">
@@ -705,12 +766,15 @@ export class TaskManager {
         const agentsContent = agentsSection.querySelector('.agents-content');
         if (!agentsContent) return;
         
-        if (operations && operations.length > 0) {
+        // Ensure operations is an array
+        const operationsArray = Array.isArray(operations) ? operations : [];
+        
+        if (operationsArray.length > 0) {
             // Extract unique agents and providers from operations
             const agents = new Set();
             const providers = new Set();
             
-            operations.forEach(op => {
+            operationsArray.forEach(op => {
                 if (op.agent_type) agents.add(op.agent_type);
                 if (op.operation_type === 'search' && op.output_data && op.output_data.provider) {
                     providers.add(op.output_data.provider);
@@ -744,7 +808,7 @@ export class TaskManager {
     // Fetch and display research report helper function
     async fetchAndDisplayResearchReport(taskId) {
         try {
-            const response = await fetch(`http://localhost:12000/api/research/tasks/${taskId}/report`);
+            const response = await fetch(`http://localhost:12000/tasks/${taskId}/report`);
             if (response.ok) {
                 const reportMarkdown = await response.text();
                 this.displayResearchReport(taskId, reportMarkdown);
@@ -792,7 +856,7 @@ export class TaskManager {
     openReportModal(taskId) {
         if (!window.currentReportData || window.currentReportData.taskId !== taskId) {
             // Fetch the report if not already loaded
-            fetch(`http://localhost:12000/api/research/tasks/${taskId}/report`)
+            fetch(`http://localhost:12000/tasks/${taskId}/report`)
                 .then(response => {
                     if (response.ok) {
                         return response.text();
@@ -878,17 +942,10 @@ export class TaskManager {
 
     async openReportModal(taskId) {
         try {
-            const response = await this.apiClient.get(`/api/research/tasks/${taskId}/report`);
+            const response = await this.apiClient.get(`/tasks/${taskId}/report`);
             if (response.ok) {
-                const reportData = await response.json();
-                
-                // Handle different possible API response structures
-                let reportContent = reportData.report_markdown || reportData.report || reportData.markdown || reportData.content || reportData;
-                
-                // If reportContent is still an object, try to stringify it
-                if (typeof reportContent === 'object') {
-                    reportContent = JSON.stringify(reportContent, null, 2);
-                }
+                // The report endpoint returns markdown as plain text, not JSON
+                const reportContent = await response.text();
                 
                 if (reportContent && reportContent.trim()) {
                     this.showReportInModal(reportContent, taskId);
@@ -931,6 +988,7 @@ export class TaskManager {
                 .replace(/^- (.*$)/gim, '<li>$1</li>')
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                 .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '<a href="$2" target="_blank" class="text-decoration-none">$1</a>')  // Parse markdown links
                 .replace(/`([^`]+)`/g, '<code class="bg-light px-1 rounded">$1</code>')
                 .replace(/\n\n/g, '</p><p class="mb-3">')
                 .replace(/\n/g, '<br>');
@@ -979,6 +1037,57 @@ export class TaskManager {
         const modal = bootstrap.Modal.getInstance(document.getElementById('researchReportModal'));
         if (modal) {
             modal.hide();
+        }
+    }
+
+    async toggleDOKTaxonomy(taskId, button) {
+        const dokContainer = document.getElementById(`dok-taxonomy-${taskId}`);
+        if (!dokContainer) {
+            console.error(`DOK taxonomy container not found for task: ${taskId}`);
+            return;
+        }
+
+        if (dokContainer.style.display === 'none' || dokContainer.style.display === '') {
+            // Show DOK taxonomy
+            button.innerHTML = '⏳ Loading DOK Taxonomy...';
+            
+            try {
+                await this.loadDOKTaxonomy(taskId);
+                dokContainer.style.display = 'block';
+                button.innerHTML = '📖 Hide DOK Taxonomy';
+            } catch (error) {
+                console.error('Error loading DOK taxonomy:', error);
+                dokContainer.innerHTML = '<div class="alert alert-danger">Failed to load DOK taxonomy data</div>';
+                dokContainer.style.display = 'block';
+                button.innerHTML = '📖 Hide DOK Taxonomy';
+            }
+        } else {
+            // Hide DOK taxonomy
+            dokContainer.style.display = 'none';
+            button.innerHTML = '📖 Show DOK Taxonomy';
+        }
+    }
+
+    async loadDOKTaxonomy(taskId) {
+        const dokContainer = document.getElementById(`dok-taxonomy-${taskId}`);
+        if (!dokContainer) {
+            console.error(`DOK taxonomy container not found for task: ${taskId}`);
+            return;
+        }
+
+        try {
+            // Render the DOK taxonomy panel using the DOK taxonomy manager
+            const dokHTML = await this.dokTaxonomyManager.renderDOKTaxonomyPanel(taskId);
+            dokContainer.innerHTML = dokHTML;
+        } catch (error) {
+            console.error('Error rendering DOK taxonomy:', error);
+            dokContainer.innerHTML = `
+                <div class="alert alert-danger">
+                    <h5>Error Loading DOK Taxonomy</h5>
+                    <p>Unable to load DOK taxonomy and bibliography information. Please try again later.</p>
+                    <small class="text-muted">Error: ${error.message}</small>
+                </div>
+            `;
         }
     }
 
@@ -1090,6 +1199,123 @@ export class TaskManager {
         return viewerHtml;
     }
 
+    // Generate user-friendly display names and badges for timeline operations
+    getOperationDisplayInfo(operation) {
+        const operationType = operation.operation_type;
+        const agentType = operation.agent_type;
+        const outputData = operation.output_data || {};  // Use output_data, not result_data
+        
+        let displayName = '';
+        let badges = [];
+        
+        // Generate user-friendly names based on operation type
+        switch (operationType) {
+            case 'topic_decomposition':
+                displayName = 'Topic Decomposition';
+                badges.push('<span class="badge bg-primary ms-2">topic_decomposition</span>');
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            case 'research_plan':
+                displayName = 'Research Planning';
+                badges.push('<span class="badge bg-primary ms-2">research_plan</span>');
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            case 'mcp_search':
+                // Show focus area as title and provider as badge
+                const focusArea = outputData.focus_area || outputData.subtopic || 'Search';
+                const providersUsed = outputData.providers_used || [];
+                const provider = providersUsed.length > 0 ? providersUsed[0] : 'MCP';
+                
+                // Use focus area as the display name
+                displayName = focusArea;
+                
+                // Show provider as badge
+                badges.push(`<span class="badge bg-success ms-2">${provider}</span>`);
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            case 'search_summary':
+                displayName = 'Search Summary';
+                badges.push('<span class="badge bg-primary ms-2">search_summary</span>');
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            case 'reasoning_analysis':
+                displayName = 'Reasoning Analysis';
+                badges.push('<span class="badge bg-primary ms-2">reasoning_analysis</span>');
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            case 'dok_taxonomy':
+                displayName = 'DOK Taxonomy';
+                badges.push('<span class="badge bg-primary ms-2">dok_taxonomy</span>');
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            default:
+                // Fallback to operation name or type
+                displayName = operation.operation_name || this.formatOperationName(operationType);
+                badges.push(`<span class="badge bg-primary ms-2">${operationType}</span>`);
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+        }
+        
+        return { displayName, badges };
+    }
+    
+    // Helper method to format operation names nicely
+    formatOperationName(operationType) {
+        return operationType
+            .split('_')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+    }
+    
+    // Calculate evidence statistics from operations data
+    calculateEvidenceStats(operations) {
+        let totalSources = 0;
+        let searchProvidersUsed = new Set();
+        
+        // Ensure operations is an array
+        const operationsArray = Array.isArray(operations) ? operations : [];
+        
+        console.log('[Evidence Stats] Total operations:', operationsArray.length);
+        
+        operationsArray.forEach(operation => {
+            // Use output_data, not result_data - this is the actual field name
+            const outputData = operation.output_data || {};
+            
+            // Track search providers from MCP search operations
+            if (operation.operation_type === 'mcp_search') {
+                console.log('[Evidence Stats] MCP search operation found:', operation);
+                // Track search providers used
+                const providers = outputData.providers_used || [];
+                console.log('[Evidence Stats] Providers used:', providers);
+                providers.forEach(provider => {
+                    if (provider && provider !== 'unknown') {
+                        searchProvidersUsed.add(provider);
+                    }
+                });
+            }
+            
+            // Count actual processed sources from search summary operations
+            // This gives us the true count of evidence items (sources that were summarized)
+            if (operation.operation_type === 'search_summary') {
+                const totalSummaries = outputData.total_summaries || 0;
+                console.log('[Evidence Stats] Search summary found with', totalSummaries, 'summaries');
+                totalSources = totalSummaries; // Use assignment, not addition, to avoid double counting
+            }
+        });
+        
+        console.log('[Evidence Stats] Final stats - Sources:', totalSources, 'Providers:', Array.from(searchProvidersUsed));
+        
+        return {
+            total_evidence_items: totalSources,
+            search_providers_used: Array.from(searchProvidersUsed)
+        };
+    }
+    
     // Utility methods
     getStatusClass(status) {
         const statusMap = {
@@ -1143,6 +1369,21 @@ export class TaskManager {
                     <p>${this.escapeHtml(message)}</p>
                 </div>
             `;
+        }
+    }
+
+    // Helper method to get task status
+    async getTaskStatus(taskId) {
+        try {
+            const response = await this.apiClient.get(`/tasks/${taskId}`);
+            if (response.ok) {
+                const task = await response.json();
+                return task.status;
+            }
+            return null;
+        } catch (error) {
+            console.log('Error getting task status:', error);
+            return null;
         }
     }
 }

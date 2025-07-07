@@ -18,7 +18,7 @@ export class ComponentRenderer {
                             <input type="text" class="form-control" id="title" name="title" required>
                         </div>
                         <div class="mb-3">
-                            <label for="description" class="form-label">Description</label>
+                            <label for="description" class="form-label">Inquiry</label>
                             <textarea 
                                 class="form-control" 
                                 id="description" 
@@ -26,13 +26,33 @@ export class ComponentRenderer {
                                 rows="3" 
                                 required></textarea>
                         </div>
-                        <div class="mb-3 form-check">
-                            <input type="checkbox" class="form-check-input" id="continuous-mode" name="continuous-mode">
-                            <label class="form-check-label" for="continuous-mode">Continuous Mode</label>
-                        </div>
-                        <div class="mb-3" id="interval-container" style="display: none;">
-                            <label for="interval" class="form-label">Update Interval (hours)</label>
-                            <input type="number" class="form-control" id="interval" name="interval" value="24" min="1">
+                        <div class="mb-3">
+                            <label class="form-label">Research Type</label>
+                            <div class="form-check">
+                                <input 
+                                    type="radio" 
+                                    class="form-check-input" 
+                                    id="research-type-analytical" 
+                                    name="research-type" 
+                                    value="analytical_report" 
+                                    checked>
+                                <label class="form-check-label" for="research-type-analytical">
+                                    Analytical Report
+                                    <small class="text-muted d-block">Comprehensive research with DOK taxonomy analysis</small>
+                                </label>
+                            </div>
+                            <div class="form-check mt-2">
+                                <input 
+                                    type="radio" 
+                                    class="form-check-input" 
+                                    id="research-type-aggregation" 
+                                    name="research-type" 
+                                    value="data_aggregation">
+                                <label class="form-check-label" for="research-type-aggregation">
+                                    Data Aggregation
+                                    <small class="text-muted d-block">Structured data collection and synthesis</small>
+                                </label>
+                            </div>
                         </div>
                         <button type="submit" class="btn btn-primary">
                             Create Task

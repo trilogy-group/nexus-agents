@@ -5,6 +5,7 @@ This module provides the main entry point for the Nexus Agents system.
 """
 import asyncio
 import json
+import logging
 import os
 import uuid
 from typing import Any, Dict, List, Optional
@@ -25,6 +26,9 @@ from .summarization.summarization_agent import SummarizationAgent
 from .summarization.reasoning_agent import ReasoningAgent
 from .persistence.postgres_knowledge_base import PostgresKnowledgeBase
 import time
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 
 class NexusAgents:
@@ -72,6 +76,12 @@ class NexusAgents:
         
         # Initialize PostgreSQL KnowledgeBase for operation tracking
         self.knowledge_base = PostgresKnowledgeBase(storage_path=storage_path or "data/storage")
+        
+        # Initialize DOK workflow orchestrator with proper repository
+        from src.agents.research.dok_workflow_orchestrator import DOKWorkflowOrchestrator
+        from src.database.dok_taxonomy_repository import DOKTaxonomyRepository
+        dok_repository = DOKTaxonomyRepository(self.knowledge_base)
+        self.dok_orchestrator = DOKWorkflowOrchestrator(llm_client, dok_repository)
         
         # Initialize the agents
         self.agents = {}
@@ -240,7 +250,12 @@ class NexusAgents:
             # Step 5: Perform reasoning on the summary
             reasoning = await self._perform_reasoning(summary, query, tracking_task_id)
             
-            # Step 6: Generate and store final Markdown report
+            # Step 6: Execute DOK Taxonomy Workflow
+            dok_workflow_result = await self._execute_dok_taxonomy_workflow(
+                tracking_task_id, results, query
+            )
+            
+            # Step 7: Generate and store final Markdown report
             report_markdown = await self._generate_markdown_report(
                 query, decomposition, plan, results, summary, reasoning, tracking_task_id
             )
@@ -267,6 +282,7 @@ class NexusAgents:
                 "results": results,
                 "summary": summary,
                 "reasoning": reasoning,
+                "dok_workflow_result": dok_workflow_result,
                 "report_markdown": report_markdown
             }
             
@@ -1015,3 +1031,125 @@ class NexusAgents:
                 "further_research_needed": [],
                 "final_assessment": "Reasoning completed with limitations"
             }
+    
+    async def _execute_dok_taxonomy_workflow(self, task_id: str, search_results: List[Dict[str, Any]], research_query: str) -> Any:
+        """Execute the complete DOK taxonomy workflow."""
+        try:
+            # Debug: Log the structure of search results
+            logger.info(f"DOK Workflow - Processing {len(search_results)} search results")
+            for i, result in enumerate(search_results[:2]):  # Log first 2 results for debugging
+                logger.info(f"Search result {i} structure: {json.dumps(result, indent=2)[:500]}...")
+            
+            # Convert search results to the format expected by DOK orchestrator
+            sources = []
+            import uuid
+            for result in search_results:
+                # Handle different result structures from search agents
+                if isinstance(result, dict) and 'result' in result:
+                    # Handle nested MCP search results structure
+                    nested_results = result.get('result', {}).get('search_results', [])
+                    for search_item in nested_results:
+                        content_items = search_item.get('results', {}).get('content', [])
+                        for content_item in content_items:
+                            # Parse JSON string in 'text' field to get actual web results
+                            text_content = content_item.get('text', '')
+                            if text_content:
+                                try:
+                                    parsed_results = json.loads(text_content)
+                                    web_results = parsed_results.get('results', [])
+                                    
+                                    for web_result in web_results:
+                                        # Generate unique source ID using task ID and UUID
+                                        source_id = f"{task_id}_src_{uuid.uuid4().hex[:8]}"
+                                        
+                                        # Store source in database first (with error handling for duplicates)
+                                        try:
+                                            await self.knowledge_base.create_source(
+                                                source_id=source_id,
+                                                title=web_result.get('name', web_result.get('title', 'Unknown')),  # MCP uses 'name' field
+                                                url=web_result.get('url', ''),
+                                                description=web_result.get('content', web_result.get('snippet', ''))[:1000],  # Limit description length
+                                                provider='mcp_search'  # Will be updated with specific MCP server names later
+                                            )
+                                        except Exception as e:
+                                            logger.warning(f"Source {source_id} may already exist: {e}")
+                                            # Continue with existing source
+                                        
+                                        sources.append({
+                                            'content': web_result.get('content', web_result.get('snippet', '')),
+                                            'metadata': {
+                                                'source_id': source_id,
+                                                'title': web_result.get('name', web_result.get('title', 'Unknown')),  # MCP uses 'name' field
+                                                'url': web_result.get('url', ''),
+                                                'provider': 'mcp_search'  # Will be updated with specific MCP server names later
+                                            }
+                                        })
+                                except json.JSONDecodeError as e:
+                                    logger.warning(f"Failed to parse JSON in text field: {e}")
+                                    # Fall back to using the content_item directly
+                                    source_id = f"{task_id}_src_{uuid.uuid4().hex[:8]}"
+                                    try:
+                                        await self.knowledge_base.create_source(
+                                            source_id=source_id,
+                                            title='Unknown',
+                                            url='',
+                                            description=text_content[:1000],
+                                            provider='unknown'
+                                        )
+                                    except Exception as e:
+                                        logger.warning(f"Source {source_id} may already exist: {e}")
+                                    
+                                    sources.append({
+                                        'content': text_content,
+                                        'metadata': {
+                                            'source_id': source_id,
+                                            'title': 'Unknown',
+                                            'url': '',
+                                            'provider': 'unknown'
+                                        }
+                                    })
+                else:
+                    # Handle direct result format
+                    # Generate unique source ID using task ID and UUID
+                    source_id = result.get('source_id', f"{task_id}_src_{uuid.uuid4().hex[:8]}")
+                    
+                    # Store source in database first (with error handling for duplicates)
+                    try:
+                        await self.knowledge_base.create_source(
+                            source_id=source_id,
+                            title=result.get('name', result.get('title', 'Unknown')),  # MCP uses 'name' field
+                            url=result.get('url', ''),
+                            description=result.get('content', result.get('snippet', ''))[:1000],  # Limit description length
+                            provider=result.get('provider', 'mcp_search')  # Default to mcp_search instead of unknown
+                        )
+                    except Exception as e:
+                        logger.warning(f"Source {source_id} may already exist: {e}")
+                        # Continue with existing source
+                    
+                    sources.append({
+                        'content': result.get('content', result.get('snippet', '')),
+                        'metadata': {
+                            'source_id': source_id,
+                            'title': result.get('name', result.get('title', 'Unknown')),  # MCP uses 'name' field
+                            'url': result.get('url', ''),
+                            'provider': result.get('provider', 'mcp_search')  # Default to mcp_search instead of unknown
+                        }
+                    })
+            
+            # Execute DOK workflow with the converted sources
+            print(f"Executing DOK taxonomy workflow for task {task_id} with {len(sources)} sources")
+            dok_workflow_result = await self.dok_orchestrator.execute_complete_workflow(
+                task_id=task_id,
+                sources=sources,
+                research_context=research_query
+            )
+            
+            print(f"DOK taxonomy workflow completed for task {task_id}")
+            return dok_workflow_result
+            
+        except Exception as e:
+            print(f"Error in DOK taxonomy workflow for task {task_id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # Return empty result to prevent workflow failure
+            return None

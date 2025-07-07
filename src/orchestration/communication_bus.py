@@ -55,10 +55,10 @@ class CommunicationBus:
         
         if self.pubsub:
             await self.pubsub.unsubscribe()
-            await self.pubsub.close()
+            await self.pubsub.aclose()
         
         if self.redis_client:
-            await self.redis_client.close()
+            await self.redis_client.aclose()
     
     async def publish_message(self, message: Any = None, **kwargs):
         """Publish a message to a topic.
