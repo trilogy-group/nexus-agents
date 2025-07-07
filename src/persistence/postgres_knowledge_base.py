@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -60,6 +60,12 @@ class PostgresKnowledgeBase:
         self.pool: Optional[asyncpg.Pool] = None
         
         logger.info(f"PostgreSQL Knowledge Base initialized: {self.host}:{self.port}/{self.database}")
+    
+    async def get_connection_pool(self):
+        """Get the connection pool for use by repositories."""
+        if not self.pool:
+            await self.connect()
+        return self.pool
     
     async def connect(self) -> None:
         """Create connection pool to PostgreSQL database."""
@@ -139,6 +145,41 @@ class PostgresKnowledgeBase:
         logger.info(f"Created task {task_id}: {title}")
         return task_id
     
+    async def create_research_task(
+        self,
+        *,
+        research_query: str,
+        user_id: Optional[str] = None,
+        research_type: str = "analytical_report",
+        aggregation_config: Optional[Dict[str, Any]] = None,
+        title: Optional[str] = None,
+        external_resource: Optional[str] = None
+    ) -> str:
+        """Create a new research task with enhanced fields."""
+        task_id = str(uuid.uuid4())
+        
+        # Use query as title if not provided
+        if not title:
+            title = research_query[:100] + "..." if len(research_query) > 100 else research_query
+        
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO research_tasks (
+                    task_id, title, description, research_query, 
+                    user_id, status, research_type, aggregation_config,
+                    external_resource, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+                """,
+                task_id, title, research_query, research_query,
+                user_id, "pending", research_type,
+                json.dumps(aggregation_config) if aggregation_config else None,
+                external_resource
+            )
+        
+        logger.info(f"Created research task {task_id} of type {research_type}")
+        return task_id
+    
     async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a task by ID."""
         async with self.pool.acquire() as conn:
@@ -191,7 +232,7 @@ class PostgresKnowledgeBase:
     ) -> bool:
         """Update task fields."""
         if updated_at is None:
-            updated_at = datetime.utcnow()
+            updated_at = datetime.now(timezone.utc)
         
         # Build dynamic update query
         set_clauses = ["updated_at = $2"]
@@ -474,7 +515,7 @@ class PostgresKnowledgeBase:
                                 user_id: str = None, created_at: datetime = None) -> str:
         """Store a new research task."""
         if created_at is None:
-            created_at = datetime.utcnow()
+            created_at = datetime.now(timezone.utc)
             
         async with self.pool.acquire() as conn:
             await conn.execute(
@@ -493,7 +534,7 @@ class PostgresKnowledgeBase:
                                         error_message: str = None, updated_at: datetime = None):
         """Update research task status."""
         if updated_at is None:
-            updated_at = datetime.utcnow()
+            updated_at = datetime.now(timezone.utc)
             
         async with self.pool.acquire() as conn:
             await conn.execute(
@@ -534,10 +575,137 @@ class PostgresKnowledgeBase:
                 """,
                 task_id, report_markdown, 
                 json.dumps(metadata) if metadata else None,
-                datetime.utcnow()
+                datetime.now(timezone.utc)
             )
         
         logger.info(f"Stored research report for task {task_id} ({len(report_markdown)} chars)")
+    
+    async def create_research_subtask(
+        self,
+        subtask_id: str,
+        task_id: str,
+        topic: str,
+        description: str = None,
+        status: str = "pending",
+        assigned_agent: str = None
+    ) -> str:
+        """Create a new research subtask."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO research_subtasks (
+                    subtask_id, task_id, topic, description, status, assigned_agent
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+                """,
+                subtask_id, task_id, topic, description, status, assigned_agent
+            )
+        
+        logger.info(f"Created subtask {subtask_id} for task {task_id}: {topic}")
+        return subtask_id
+    
+    async def create_research_report(
+        self,
+        task_id: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Create a research report for a task."""
+        
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO research_reports (
+                    task_id, report_markdown, metadata, created_at
+                ) VALUES ($1, $2, $3, NOW())
+                ON CONFLICT (task_id) DO UPDATE SET
+                    report_markdown = EXCLUDED.report_markdown,
+                    metadata = EXCLUDED.metadata,
+                    updated_at = NOW()
+                """,
+                task_id, content,
+                json.dumps(metadata) if metadata else None
+            )
+        
+        logger.info(f"Created/updated research report for task {task_id}")
+        return task_id
+    
+    async def create_source(
+        self,
+        source_id: str,
+        url: str = None,
+        title: str = None,
+        description: str = None,
+        source_type: str = "web",
+        provider: str = "test",
+        metadata: Dict[str, Any] = None
+    ) -> str:
+        """Create a new source record."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO sources (
+                    source_id, url, title, description, source_type, provider, metadata
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """,
+                source_id, url, title, description, source_type, provider,
+                json.dumps(metadata) if metadata else None
+            )
+        
+        logger.info(f"Created source {source_id}: {title or url or 'Unknown'}")
+        return source_id
+    
+    async def create_task_operation(
+        self,
+        task_id: str,
+        agent_type: str,
+        operation_type: str,
+        status: str = "pending",
+        result_data: Dict[str, Any] = None,
+        operation_name: str = None
+    ) -> str:
+        """Create a task operation record."""
+        operation_id = str(uuid.uuid4())
+        
+        if not operation_name:
+            # Generate user-friendly operation names
+            operation_name = self._generate_user_friendly_operation_name(operation_type, agent_type)
+        
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO task_operations (
+                    operation_id, task_id, operation_type, operation_name,
+                    status, agent_type, output_data
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """,
+                operation_id, task_id, operation_type, operation_name,
+                status, agent_type,
+                json.dumps(result_data) if result_data else None
+            )
+        
+        logger.info(f"Created operation {operation_id} for task {task_id}: {operation_name}")
+        return operation_id
+    
+    def _generate_user_friendly_operation_name(self, operation_type: str, agent_type: str) -> str:
+        """Generate user-friendly operation names for timeline display."""
+        # Map operation types to user-friendly names
+        operation_names = {
+            'topic_decomposition': 'Topic Decomposition',
+            'research_plan': 'Research Planning',
+            'mcp_search': 'MCP Search',
+            'search_summary': 'Search Summary',
+            'reasoning_analysis': 'Reasoning Analysis',
+            'dok_taxonomy': 'DOK Taxonomy',
+            'report_generation': 'Report Generation',
+            'data_aggregation': 'Data Aggregation'
+        }
+        
+        # Return user-friendly name or formatted fallback
+        return operation_names.get(operation_type, self._format_operation_name(operation_type))
+    
+    def _format_operation_name(self, operation_type: str) -> str:
+        """Format operation type name for display."""
+        return operation_type.replace('_', ' ').title()
     
     async def get_research_report(self, task_id: str) -> Optional[str]:
         """Get research report markdown content."""

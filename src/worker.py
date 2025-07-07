@@ -12,7 +12,7 @@ import signal
 import sys
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
@@ -23,8 +23,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.nexus_agents import NexusAgents
 from src.orchestration.communication_bus import CommunicationBus
-from src.orchestration.task_manager import TaskStatus
+from src.orchestration.research_orchestrator import ResearchOrchestrator
+from src.orchestration.parallel_task_coordinator import ParallelTaskCoordinator
+from src.agents.research.dok_workflow_orchestrator import DOKWorkflowOrchestrator
 from src.persistence.postgres_knowledge_base import PostgresKnowledgeBase
+from src.orchestration.rate_limiter import RateLimiter
+from src.orchestration.task_manager import TaskStatus
 from src.llm import LLMClient
 from src.config.search_providers import SearchProvidersConfig
 from src.mcp_config_loader import MCPConfigLoader
@@ -62,6 +66,7 @@ class ResearchWorker:
         
         # Components
         self.nexus_agents: Optional[NexusAgents] = None
+        self.research_orchestrator: Optional[ResearchOrchestrator] = None
         
         # Control flags
         self.running = False
@@ -84,6 +89,10 @@ class ResearchWorker:
             await self._initialize_nexus_agents()
             logger.info("Initialized Nexus Agents system")
             
+            # Initialize consolidated Research Orchestrator
+            await self._initialize_research_orchestrator()
+            logger.info("Initialized consolidated Research Orchestrator")
+            
             # Start processing tasks
             self.running = True
             await self._process_tasks()
@@ -101,6 +110,9 @@ class ResearchWorker:
         # Clean up connections
         if self.nexus_agents:
             await self.nexus_agents.stop()
+            
+        if self.research_orchestrator and hasattr(self.research_orchestrator, 'db'):
+            await self.research_orchestrator.db.disconnect()
             
         if self.redis_client:
             await self.redis_client.close()
@@ -137,6 +149,42 @@ class ResearchWorker:
         
         # Start Nexus Agents system (connects PostgreSQL knowledge base for operation tracking)
         await self.nexus_agents.start()
+    
+    async def _initialize_research_orchestrator(self):
+        """Initialize the consolidated research orchestrator."""
+        # Create database connection
+        db = PostgresKnowledgeBase()
+        await db.connect()
+        
+        # Create rate limiter
+        rate_limiter = RateLimiter()
+        
+        # Create task coordinator
+        task_coordinator = ParallelTaskCoordinator(
+            redis_client=self.redis_client,
+            rate_limiter=rate_limiter
+        )
+        
+        # Create LLM client
+        llm_client = LLMClient()
+        
+        # Create DOK workflow orchestrator
+        dok_workflow = DOKWorkflowOrchestrator(
+            llm_client=llm_client
+        )
+        
+        # Load LLM config
+        llm_config_path = os.getenv("LLM_CONFIG", "config/llm_config.json")
+        with open(llm_config_path, 'r') as f:
+            llm_config = json.load(f)
+        
+        # Create consolidated research orchestrator
+        self.research_orchestrator = ResearchOrchestrator(
+            task_coordinator=task_coordinator,
+            dok_workflow=dok_workflow,
+            db=db,
+            llm_config=llm_config
+        )
         
     async def _process_tasks(self):
         """Main task processing loop."""
@@ -211,26 +259,27 @@ class ResearchWorker:
             # Update status to searching using shared PostgreSQL knowledge base
             await self._update_task_status_pg(task_id, TaskStatus.SEARCHING)
             
-            # Execute the research (NexusAgents handles all DB operations internally with PostgreSQL)
-            result = await self.nexus_agents.research(
-                query=task["description"],
+            # Execute the research using consolidated ResearchOrchestrator
+            # This ensures DOK taxonomy, summarization, and reasoning work end-to-end
+            result = await self.research_orchestrator.execute_analytical_report(
                 task_id=task_id,
-                max_depth=3,
-                max_breadth=5
+                query=task["description"]
             )
             
             # Update status to completed using shared PostgreSQL knowledge base
             await self._update_task_status_pg(task_id, TaskStatus.COMPLETED)
             
             # Store results in PostgreSQL knowledge base (shared instance)
+            # Note: ResearchOrchestrator.execute_analytical_report() returns a markdown string,
+            # not a dictionary like the legacy NexusAgents.research() method
             kb = self.nexus_agents.knowledge_base
             await kb.update_task(
                 task_id=task_id,
                 status="completed",
-                completed_at=datetime.utcnow(),
-                results=result.get("search_results"),
-                summary=result.get("summary"),
-                reasoning=result.get("reasoning")
+                completed_at=datetime.now(timezone.utc),
+                results=result if isinstance(result, str) else str(result),  # Handle string result
+                summary="Research completed using consolidated orchestrator",
+                reasoning="Full analytical report with DOK taxonomy generated"
             )
             
             logger.info(f"Task {task_id} completed successfully")
@@ -257,14 +306,14 @@ class ResearchWorker:
         await kb.update_task(
             task_id=task_id,
             status=status.value,
-            updated_at=datetime.utcnow()
+            updated_at=datetime.now(timezone.utc)
         )
         
         # Publish status update event
         status_update = {
             "task_id": task_id,
             "status": status.value,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "worker_id": self.worker_id
         }
         

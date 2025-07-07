@@ -1,9 +1,11 @@
 // Task management module
 import { ApiClient } from './api.js';
+import { DOKTaxonomyManager } from './dok-taxonomy.js';
 
 export class TaskManager {
     constructor() {
         this.apiClient = new ApiClient();
+        this.dokTaxonomyManager = new DOKTaxonomyManager();
         this.timelineCardStates = {};
         this.currentReportData = null;
         this.lastTaskStates = {};
@@ -17,13 +19,14 @@ export class TaskManager {
 
     async createTask(event) {
         event.preventDefault();
-
+        
         const formData = new FormData(event.target);
         const title = formData.get('title');
         const description = formData.get('description');
+        const researchType = formData.get('research-type') || 'analytical_report';
         const continuousMode = formData.get('continuous-mode') === 'on';
         const interval = formData.get('interval');
-
+        
         if (!title.trim() || !description.trim()) {
             alert('Please fill in all required fields');
             return;
@@ -36,23 +39,28 @@ export class TaskManager {
         submitButton.innerHTML = '<span class="loading-spinner"></span> Creating Task...';
 
         try {
+            // Pass title separately and description as research_query
             const response = await this.apiClient.post('/tasks', {
                 title: title.trim(),
-                description: description.trim(),
-                continuous_mode: continuousMode,
-                continuous_interval_hours: continuousMode ? parseInt(interval) : null
+                research_query: description.trim(),  // The inquiry/description becomes the research query
+                research_type: researchType,
+                user_id: null  // Optional field
             });
 
             if (response.ok) {
                 const result = await response.json();
                 console.log('Task created:', result);
-
+                
                 // Clear form
                 event.target.reset();
-                document.getElementById('interval-container').style.display = 'none';
-
-                // Refresh tasks to show the new one
-                await this.refreshTasks();
+                
+                // Add new task to polling manager
+                if (window.pollingManager) {
+                    window.pollingManager.addTask(result);
+                }
+                
+                // Refresh tasks after 2 seconds as requested
+                setTimeout(() => this.refreshTasks(), 2000);
             } else {
                 const error = await response.json();
                 alert(`Failed to create task: ${error.detail || 'Unknown error'}`);
@@ -73,7 +81,7 @@ export class TaskManager {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
-
+            
             const tasks = await response.json();
             await this.displayTasks(tasks);
         } catch (error) {
@@ -97,19 +105,24 @@ export class TaskManager {
         }
 
         let html = '<div class="row">';
-
+        
         for (const task of tasks) {
             html += this.renderTaskCard(task);
         }
-
+        
         html += '</div>';
         taskListContainer.innerHTML = html;
-
+        
+        // Initialize polling manager with current tasks
+        if (window.pollingManager) {
+            window.pollingManager.initializeWithTasks(tasks);
+        }
+        
         // Load detailed workflow information after rendering
         for (const task of tasks) {
             setTimeout(() => this.loadTaskWorkflowDetails(task.task_id), 100);
         }
-
+        
         // Restore timeline card states after DOM update
         setTimeout(() => this.restoreTimelineCardStates(), 100);
     }
@@ -130,7 +143,7 @@ export class TaskManager {
             } else if (operations && Array.isArray(operations.timeline)) {
                 this.displayExecutedAgents(taskId, operations.timeline);
             }
-
+            
             // Auto-load Research Report for completed tasks
             if (task && task.status === 'completed') {
                 this.fetchAndDisplayResearchReport(taskId);
@@ -148,7 +161,7 @@ export class TaskManager {
 
     renderTaskCard(task, taskDetails) {
         const statusClass = `status-${task.status}`;
-
+        
         return `
             <div class="col-12 mb-4">
                 <div class="card task-card">
@@ -169,14 +182,14 @@ export class TaskManager {
                             <p><strong>Created:</strong> ${task.created_at ? new Date(task.created_at).toLocaleString() : 'N/A'} | <strong>Updated:</strong> ${task.updated_at ? new Date(task.updated_at).toLocaleString() : 'N/A'}</p>
                             ${task.continuous_mode ? `<p><strong>Continuous Mode:</strong> ${task.continuous_interval_hours} hours</p>` : ''}
                         </div>
-
+                        
                         <!-- Workflow sections - will be populated by loadTaskWorkflowDetails -->
                         <div class="task-workflow-info mb-3">
                             <div class="workflow-section" id="decomposition-${task.task_id}" style="display: none;">
                                 <h6 class="text-primary">Topic Decomposition</h6>
                                 <div class="decomposition-content"></div>
                             </div>
-
+                            
                             <!-- Always show Executed Agents section, but initially with empty placeholder -->
                             <div class="workflow-section" id="agents-${task.task_id}">
                                 <h6 class="text-success mb-2">Executed Agents</h6>
@@ -187,33 +200,44 @@ export class TaskManager {
                                     </div>
                                 </div>
                             </div>
-
+                            
                             <div class="workflow-section" id="report-${task.task_id}" style="display: none;">
                                 <h6 class="text-info">Research Report</h6>
                                 <div class="report-content"></div>
                             </div>
                         </div>
-
+                        
                         <!-- Action buttons -->
                         <div class="mb-3">
                             <button class="btn btn-primary btn-sm me-2" onclick="window.taskManager.toggleEvidence('${task.task_id}', this)">
                                 Show Research Evidence
                             </button>
+                            <button class="btn btn-success btn-sm me-2" onclick="window.taskManager.toggleDOKTaxonomy('${task.task_id}', this)">
+                                📖 Show DOK Taxonomy
+                            </button>
                             <button class="btn btn-danger btn-sm" onclick="window.taskManager.deleteTask('${task.task_id}', '${this.escapeHtml(task.title)}')">
                                 <i class="fas fa-trash"></i> Delete Task
                             </button>
                         </div>
-
+                        
 
                         ${this.renderTaskWorkflowInfo(task.task_id, taskDetails)}
                         </div>
                     </div>
-
+                    
                     <!-- Evidence container -->
                     <div id="evidence-${task.task_id}" style="display: none;">
                         <div class="text-center py-2">
                             <div class="spinner-border spinner-border-sm" role="status"></div>
                             Loading evidence...
+                        </div>
+                    </div>
+                    
+                    <!-- DOK Taxonomy container -->
+                    <div id="dok-taxonomy-${task.task_id}" style="display: none;">
+                        <div class="text-center py-2">
+                            <div class="spinner-border spinner-border-sm" role="status"></div>
+                            Loading DOK taxonomy...
                         </div>
                     </div>
                 </div>
@@ -222,6 +246,37 @@ export class TaskManager {
     }
 
 
+
+    async updateTaskCard(task) {
+        // Find the task card element
+        const taskCard = document.querySelector(`#task-${task.task_id}`);
+        if (!taskCard) {
+            // Task card doesn't exist, need to refresh full list
+            await this.refreshTasks();
+            return;
+        }
+        
+        // Update status badge
+        const statusBadge = taskCard.querySelector('.badge');
+        if (statusBadge) {
+            statusBadge.className = `badge ${this.getStatusBadgeClass(task.status)}`;
+            statusBadge.textContent = this.formatStatus(task.status);
+        }
+        
+        // Update metadata
+        const metadataText = taskCard.querySelector('.text-muted');
+        if (metadataText) {
+            metadataText.textContent = `Created: ${new Date(task.created_at).toLocaleString()}`;
+        }
+        
+        // If task is now completed, fetch the report
+        if (task.status === 'completed' && window.pollingManager && !window.pollingManager.completedReports.has(task.task_id)) {
+            await this.fetchAndDisplayResearchReport(task.task_id);
+        }
+        
+        // Update workflow details if needed
+        await this.loadTaskWorkflowDetails(task.task_id);
+    }
 
     renderTaskWorkflowInfo(taskId, taskDetails) {
         if (!taskDetails?.operations?.length) return '';
@@ -240,17 +295,17 @@ export class TaskManager {
         }
 
         let html = '<div class="timeline-container">';
-
+        
         timeline.forEach((operation, index) => {
             const cardId = `timeline-${operation.operation_id}`;
             const isExpanded = this.timelineCardStates[cardId] || false;
             const statusClass = this.getStatusClass(operation.status);
             const duration = this.calculateDuration(operation.started_at, operation.completed_at);
-
+            
             html += `
                 <div class="card timeline-card mb-3 ${isExpanded ? 'expanded' : 'collapsed'}" id="${cardId}">
-                    <div class="timeline-header"
-                         data-action="toggle-timeline"
+                    <div class="timeline-header" 
+                         data-action="toggle-timeline" 
                          data-card-id="${cardId}">
                         <div class="d-flex align-items-center">
                             <span class="timeline-toggle-icon me-2">▶</span>
@@ -261,21 +316,21 @@ export class TaskManager {
                             </div>
                         </div>
                     </div>
-
+                    
                     <div class="timeline-content" style="display: ${isExpanded ? 'block' : 'none'};">
                         ${this.renderOperationDetails(operation)}
                     </div>
                 </div>
             `;
         });
-
+        
         html += '</div>';
         return html;
     }
 
     renderOperationDetails(operation) {
         let html = '<div class="row">';
-
+        
         // Input section
         if (operation.input_data) {
             html += `
@@ -287,7 +342,7 @@ export class TaskManager {
                 </div>
             `;
         }
-
+        
         // Output section
         if (operation.output_data) {
             html += `
@@ -299,7 +354,7 @@ export class TaskManager {
                 </div>
             `;
         }
-
+        
         // Evidence section
         if (operation.evidence && operation.evidence.length > 0) {
             html += `
@@ -309,7 +364,7 @@ export class TaskManager {
                 </div>
             `;
         }
-
+        
         html += '</div>';
         return html;
     }
@@ -337,18 +392,18 @@ export class TaskManager {
 
         const content = card.querySelector('.timeline-content');
         const icon = card.querySelector('.timeline-toggle-icon');
-
+        
         if (!content || !icon) return;
 
         const isExpanded = !card.classList.contains('expanded');
-
+        
         // Update visual state
         if (isExpanded) {
             card.classList.add('expanded');
             card.classList.remove('collapsed');
             content.style.display = 'block';
             icon.textContent = '▼';
-
+            
             // Expand JSON viewers in this card after a small delay
             setTimeout(() => {
                 const jsonViewers = content.querySelectorAll('json-viewer');
@@ -364,7 +419,7 @@ export class TaskManager {
             content.style.display = 'none';
             icon.textContent = '▶';
         }
-
+        
         // Save state
         this.timelineCardStates[cardId] = isExpanded;
     }
@@ -387,7 +442,7 @@ export class TaskManager {
         if (evidenceContainer.style.display === 'none' || evidenceContainer.style.display === '') {
             // Show evidence
             button.innerHTML = '⏳ Loading Evidence...';
-
+            
             try {
                 await this.loadTaskEvidence(taskId);
                 evidenceContainer.style.display = 'block';
@@ -415,49 +470,53 @@ export class TaskManager {
         try {
             // Use fetch directly to avoid potential apiClient issues
             const response = await fetch(`http://localhost:12000/tasks/${taskId}/operations`);
-
+            
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
-
-            const operations = await response.json();
-
-            // Additionally fetch evidence statistics for Evidence Items and Search Providers counts
-            const evidenceResponse = await fetch(`http://localhost:12000/tasks/${taskId}/evidence`);
-            let evidenceStats = null;
-            if (evidenceResponse.ok) {
-                const evidenceData = await evidenceResponse.json();
-                evidenceStats = evidenceData.statistics;
-            }
-
+            
+            const data = await response.json();
+            console.log('[Evidence] Raw API response:', data);
+            
+            // Extract operations array from response - API returns {task_id, operations}
+            const operations = data.operations || [];
+            console.log('[Evidence] Extracted operations:', operations);
+            
+            // Calculate evidence statistics from operations data
+            const evidenceStats = this.calculateEvidenceStats(operations);
+            
             // Build evidence display using the timeline renderer
             const evidenceHTML = this.buildEvidenceDisplayFromOperations(operations, evidenceStats, taskId);
             evidenceContainer.innerHTML = evidenceHTML;
-
+            
             // Display executed agents section
             this.displayExecutedAgents(taskId, operations);
-
-            // Fetch and display research report
-            this.fetchAndDisplayResearchReport(taskId);
-
+            
+            // Only fetch and display research report if task is completed
+            // Don't attempt to fetch reports for tasks that are still processing
+            const taskStatus = await this.getTaskStatus(taskId);
+            if (taskStatus === 'completed') {
+                this.fetchAndDisplayResearchReport(taskId);
+            }
+            
             // Add event delegation for timeline card toggles
             setTimeout(() => {
                 const timelineHeaders = evidenceContainer.querySelectorAll('.timeline-card-header[data-card-id]');
                 timelineHeaders.forEach(header => {
                     header.addEventListener('click', function() {
                         const cardId = this.getAttribute('data-card-id');
-
+                        
                         // Call toggle function directly
                         const card = document.getElementById(cardId);
                         if (card) {
                             const isExpanded = card.classList.toggle('expanded');
-
+                            
                             // Update the toggle arrow
                             const toggle = card.querySelector('.timeline-card-toggle');
                             if (toggle) {
                                 toggle.textContent = isExpanded ? '▼' : '▶';
                             }
-
+                            
                             // If expanding, expand JSON viewers
                             if (isExpanded) {
                                 setTimeout(() => {
@@ -472,13 +531,13 @@ export class TaskManager {
                         }
                     });
                 });
-
+                
                 // Restore timeline card states after rendering
                 if (window.restoreTimelineCardStates) {
                     window.restoreTimelineCardStates();
                 }
             }, 100);
-
+            
         } catch (error) {
             console.error('Error fetching evidence:', error);
             evidenceContainer.innerHTML = `
@@ -499,7 +558,7 @@ export class TaskManager {
             console.log('Operations is not an array:', typeof operations, operations);
             operationsArray = [];
         }
-
+        
         if (!operationsArray || operationsArray.length === 0) {
             return `
                 <div class="mt-3">
@@ -510,15 +569,15 @@ export class TaskManager {
                 </div>
             `;
         }
-
+        
         // Display statistics
         const totalOperations = operationsArray.length;
         const completedOperations = operationsArray.filter(op => op.status === 'completed').length;
-
+        
         let html = `
             <div class="mt-3">
                 <h6>Research Evidence Summary</h6>
-
+                
                 <!-- Statistics -->
                 <div class="stats-grid">
                     <div class="stat-card">
@@ -539,47 +598,47 @@ export class TaskManager {
                     </div>
                 </div>
         `;
-
+        
         // Add search providers used - use evidenceStats if available for correct provider names
         const providersToShow = evidenceStats ? evidenceStats.search_providers_used : searchProviders;
         if (providersToShow.length > 0) {
             html += `
                 <div class="mb-3">
-                    <strong>Search Providers:</strong>
+                    <strong>Search Providers:</strong> 
                     ${providersToShow.map(provider => `<span class="badge bg-secondary me-1">${provider}</span>`).join('')}
                 </div>
             `;
         }
-
+        
         const timelineHtml = this.buildTimelineDisplay(operationsArray, taskId);
-
+        
         // Schedule state restoration after DOM update
         setTimeout(() => {
             if (window.restoreTimelineCardStates) {
                 window.restoreTimelineCardStates();
             }
         }, 100);
-
+        
         return html + timelineHtml + '</div>';
     }
-
+    
     // Build timeline display HTML with collapsible cards (from original)
     buildTimelineDisplay(timeline, taskId = null) {
         if (!timeline || timeline.length === 0) {
             return '<p class="text-muted">No research operations recorded yet.</p>';
         }
-
+        
         let html = `
             <h6 class="mt-4 mb-3">Research Timeline</h6>
             <div class="timeline-container">
         `;
-
+        
         timeline.forEach((operation, index) => {
             const statusClass = operation.status || 'pending';
-            const durationSeconds = operation.duration_ms ? (operation.duration_ms / 1000).toFixed(1) :
+            const durationSeconds = operation.duration_ms ? (operation.duration_ms / 1000).toFixed(1) : 
                                   operation.duration_seconds ? operation.duration_seconds : 'N/A';
             const cardId = taskId ? `timeline-card-${taskId}-${index}` : `timeline-card-${index}`;
-
+            
             // Create status indicator with color
             const statusIndicator = {
                 'completed': '✅',
@@ -587,25 +646,29 @@ export class TaskManager {
                 'running': '⏳',
                 'pending': '⏸️'
             }[statusClass] || '●';
-
+            
+            // Generate user-friendly names and badges
+            const { displayName, badges } = this.getOperationDisplayInfo(operation);
+            
             html += `
                 <div class="timeline-card" id="${cardId}">
-                    <div class="timeline-card-header d-flex justify-content-between align-items-center" data-card-id="${cardId}" style="cursor: pointer;">
+                    <div class="timeline-card-header" data-card-id="${cardId}" style="cursor: pointer;">
                         <div class="d-flex align-items-center">
                             <span class="timeline-card-toggle me-2">▶</span>
                             <span class="me-2">${statusIndicator}</span>
-                            <strong>${operation.operation_name || operation.operation_type}</strong>
-                            <span class="badge bg-primary ms-2">${operation.operation_type}</span>
-                            ${operation.agent_type ? `<span class="badge bg-info ms-1">${operation.agent_type}</span>` : ''}
+                            <strong>${displayName}</strong>
+                            ${badges.join('')}
                         </div>
-                        <small class="text-muted">
-                            Status: <span class="text-${statusClass === 'completed' ? 'success' : statusClass === 'failed' ? 'danger' : 'primary'}">${statusClass}</span> |
-                            Duration: ${durationSeconds}s
-                        </small>
+                        <div class="text-end">
+                            <small class="text-muted">
+                                Status: <span class="text-${statusClass === 'completed' ? 'success' : statusClass === 'failed' ? 'danger' : 'primary'}">${statusClass}</span> | 
+                                Duration: ${durationSeconds}s
+                            </small>
+                        </div>
                     </div>
                     <div class="timeline-card-body">
             `;
-
+            
             // Add input data if available
             if (operation.input_data) {
                 html += `
@@ -615,7 +678,7 @@ export class TaskManager {
                     </div>
                 `;
             }
-
+            
             // Add output data if available
             if (operation.output_data) {
                 html += `
@@ -625,7 +688,7 @@ export class TaskManager {
                     </div>
                 `;
             }
-
+            
             // Add error message if operation failed
             if (operation.error_message) {
                 html += `
@@ -635,14 +698,14 @@ export class TaskManager {
                     </div>
                 `;
             }
-
+            
             // Add evidence items
             if (operation.evidence && operation.evidence.length > 0) {
                 html += `
                     <div class="mb-3">
                         <h6 class="text-info">Evidence (${operation.evidence.length} items):</h6>
                 `;
-
+                
                 operation.evidence.forEach((evidence, evidenceIndex) => {
                     html += `
                         <div class="card mb-2">
@@ -656,7 +719,7 @@ export class TaskManager {
                                 </div>
                             </div>
                     `;
-
+                    
                     if (evidence.evidence_data) {
                         html += `
                             <div class="card-body py-2">
@@ -664,30 +727,30 @@ export class TaskManager {
                             </div>
                         `;
                     }
-
+                    
                     html += '</div>';
                 });
-
+                
                 html += '</div>';
             }
-
+            
             html += `
                     </div>
                 </div>
             `;
         });
-
+        
         html += `
             </div>
         `;
-
+        
         return html;
     }
 
     // Expand JSON viewers in a timeline card
     expandJsonViewersInCard(card) {
         setTimeout(() => {
-            const viewers = card.querySelectorAll('json-viewer');
+            const viewers = card.querySelectorAll('json-viewer'); 
             viewers.forEach(viewer => {
                 if (viewer.expandAll) {
                     viewer.expandAll();
@@ -702,37 +765,40 @@ export class TaskManager {
         if (!agentsSection) return;
         const agentsContent = agentsSection.querySelector('.agents-content');
         if (!agentsContent) return;
-
-        if (operations && operations.length > 0) {
+        
+        // Ensure operations is an array
+        const operationsArray = Array.isArray(operations) ? operations : [];
+        
+        if (operationsArray.length > 0) {
             // Extract unique agents and providers from operations
             const agents = new Set();
             const providers = new Set();
-
-            operations.forEach(op => {
+            
+            operationsArray.forEach(op => {
                 if (op.agent_type) agents.add(op.agent_type);
                 if (op.operation_type === 'search' && op.output_data && op.output_data.provider) {
                     providers.add(op.output_data.provider);
                 }
             });
-
+            
             let html = '<div class="alert alert-light p-2">';
-
+            
             if (agents.size > 0) {
                 html += '<div class="mb-2"><strong>Agents:</strong> ';
-                html += Array.from(agents).map(agent =>
+                html += Array.from(agents).map(agent => 
                     `<span class="badge bg-success me-1">${agent}</span>`
                 ).join('');
                 html += '</div>';
             }
-
+            
             if (providers.size > 0) {
                 html += '<div><strong>Providers:</strong> ';
-                html += Array.from(providers).map(provider =>
+                html += Array.from(providers).map(provider => 
                     `<span class="badge bg-info me-1">${provider}</span>`
                 ).join('');
                 html += '</div>';
             }
-
+            
             html += '</div>';
             agentsContent.innerHTML = html;
             agentsSection.style.display = 'block';
@@ -742,7 +808,7 @@ export class TaskManager {
     // Fetch and display research report helper function
     async fetchAndDisplayResearchReport(taskId) {
         try {
-            const response = await fetch(`http://localhost:12000/api/research/tasks/${taskId}/report`);
+            const response = await fetch(`http://localhost:12000/tasks/${taskId}/report`);
             if (response.ok) {
                 const reportMarkdown = await response.text();
                 this.displayResearchReport(taskId, reportMarkdown);
@@ -756,14 +822,14 @@ export class TaskManager {
     displayResearchReport(taskId, reportMarkdown) {
         const reportSection = document.getElementById(`report-${taskId}`);
         const reportContent = reportSection.querySelector('.report-content');
-
+        
         if (reportMarkdown) {
             // Store report data for download functionality
             window.currentReportData = {
                 taskId: taskId,
                 markdown: reportMarkdown
             };
-
+            
             // Create a button to open the modal instead of inline content
             const html = `
                 <div class="alert alert-success p-3">
@@ -780,7 +846,7 @@ export class TaskManager {
                     </div>
                 </div>
             `;
-
+            
             reportContent.innerHTML = html;
             reportSection.style.display = 'block';
         }
@@ -790,7 +856,7 @@ export class TaskManager {
     openReportModal(taskId) {
         if (!window.currentReportData || window.currentReportData.taskId !== taskId) {
             // Fetch the report if not already loaded
-            fetch(`http://localhost:12000/api/research/tasks/${taskId}/report`)
+            fetch(`http://localhost:12000/tasks/${taskId}/report`)
                 .then(response => {
                     if (response.ok) {
                         return response.text();
@@ -836,11 +902,11 @@ export class TaskManager {
             `;
             document.body.appendChild(modal);
         }
-
+        
         // Set the content and show the modal
         const reportContent = document.getElementById('reportContent');
         reportContent.innerHTML = `<pre style="white-space: pre-wrap; font-family: inherit;">${this.escapeHtml(markdown)}</pre>`;
-
+        
         const bootstrapModal = new bootstrap.Modal(document.getElementById('reportModal'));
         bootstrapModal.show();
     }
@@ -854,13 +920,13 @@ export class TaskManager {
         html += `<h6>Research Evidence Summary</h6>`;
         html += `<p><strong>Total Operations:</strong> ${evidence.statistics.total_operations}</p>`;
         html += `<p><strong>Evidence Items:</strong> ${evidence.statistics.total_evidence_items}</p>`;
-
+        
         if (evidence.statistics.search_providers_used.length > 0) {
             html += `<p><strong>Search Providers:</strong> ${evidence.statistics.search_providers_used.join(', ')}</p>`;
         }
 
         html += '<hr>';
-
+        
         evidence.timeline.forEach(operation => {
             if (operation.evidence && operation.evidence.length > 0) {
                 html += `<h6>${operation.operation_type || 'Operation'}</h6>`;
@@ -869,25 +935,18 @@ export class TaskManager {
                 });
             }
         });
-
+        
         html += '</div>';
         return html;
     }
 
     async openReportModal(taskId) {
         try {
-            const response = await this.apiClient.get(`/api/research/tasks/${taskId}/report`);
+            const response = await this.apiClient.get(`/tasks/${taskId}/report`);
             if (response.ok) {
-                const reportData = await response.json();
-
-                // Handle different possible API response structures
-                let reportContent = reportData.report_markdown || reportData.report || reportData.markdown || reportData.content || reportData;
-
-                // If reportContent is still an object, try to stringify it
-                if (typeof reportContent === 'object') {
-                    reportContent = JSON.stringify(reportContent, null, 2);
-                }
-
+                // The report endpoint returns markdown as plain text, not JSON
+                const reportContent = await response.text();
+                
                 if (reportContent && reportContent.trim()) {
                     this.showReportInModal(reportContent, taskId);
                 } else {
@@ -906,18 +965,18 @@ export class TaskManager {
 
     showReportInModal(reportMarkdown, taskId) {
         this.currentReportData = { markdown: reportMarkdown, taskId: taskId };
-
+        
         const modalElement = document.getElementById('researchReportModal');
         if (!modalElement) {
             console.error('Modal element not found');
             alert('Modal not available. Please refresh the page.');
             return;
         }
-
+        
         const modalTitle = document.getElementById('researchReportModalLabel');
         const modalContent = document.getElementById('researchReportContent');
         const modalMetadata = document.getElementById('reportMetadata');
-
+        
         if (modalTitle) modalTitle.textContent = `Research Report - Task ${taskId.substring(0, 8)}`;
         if (modalContent) {
             // Convert markdown to HTML with better formatting
@@ -929,16 +988,17 @@ export class TaskManager {
                 .replace(/^- (.*$)/gim, '<li>$1</li>')
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                 .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '<a href="$2" target="_blank" class="text-decoration-none">$1</a>')  // Parse markdown links
                 .replace(/`([^`]+)`/g, '<code class="bg-light px-1 rounded">$1</code>')
                 .replace(/\n\n/g, '</p><p class="mb-3">')
                 .replace(/\n/g, '<br>');
-
+            
             modalContent.innerHTML = `<div class="report-content"><p class="mb-3">${htmlContent}</p></div>`;
         }
         if (modalMetadata) {
             modalMetadata.textContent = `Report length: ${reportMarkdown.length} characters | Generated: ${new Date().toLocaleString()}`;
         }
-
+        
         // Show the modal using Bootstrap 5 syntax
         try {
             const modal = new bootstrap.Modal(modalElement, {
@@ -980,10 +1040,61 @@ export class TaskManager {
         }
     }
 
+    async toggleDOKTaxonomy(taskId, button) {
+        const dokContainer = document.getElementById(`dok-taxonomy-${taskId}`);
+        if (!dokContainer) {
+            console.error(`DOK taxonomy container not found for task: ${taskId}`);
+            return;
+        }
+
+        if (dokContainer.style.display === 'none' || dokContainer.style.display === '') {
+            // Show DOK taxonomy
+            button.innerHTML = '⏳ Loading DOK Taxonomy...';
+            
+            try {
+                await this.loadDOKTaxonomy(taskId);
+                dokContainer.style.display = 'block';
+                button.innerHTML = '📖 Hide DOK Taxonomy';
+            } catch (error) {
+                console.error('Error loading DOK taxonomy:', error);
+                dokContainer.innerHTML = '<div class="alert alert-danger">Failed to load DOK taxonomy data</div>';
+                dokContainer.style.display = 'block';
+                button.innerHTML = '📖 Hide DOK Taxonomy';
+            }
+        } else {
+            // Hide DOK taxonomy
+            dokContainer.style.display = 'none';
+            button.innerHTML = '📖 Show DOK Taxonomy';
+        }
+    }
+
+    async loadDOKTaxonomy(taskId) {
+        const dokContainer = document.getElementById(`dok-taxonomy-${taskId}`);
+        if (!dokContainer) {
+            console.error(`DOK taxonomy container not found for task: ${taskId}`);
+            return;
+        }
+
+        try {
+            // Render the DOK taxonomy panel using the DOK taxonomy manager
+            const dokHTML = await this.dokTaxonomyManager.renderDOKTaxonomyPanel(taskId);
+            dokContainer.innerHTML = dokHTML;
+        } catch (error) {
+            console.error('Error rendering DOK taxonomy:', error);
+            dokContainer.innerHTML = `
+                <div class="alert alert-danger">
+                    <h5>Error Loading DOK Taxonomy</h5>
+                    <p>Unable to load DOK taxonomy and bibliography information. Please try again later.</p>
+                    <small class="text-muted">Error: ${error.message}</small>
+                </div>
+            `;
+        }
+    }
+
     async deleteTask(taskId, taskTitle) {
         // Create modal if it doesn't exist
         let confirmModal = document.getElementById('task-delete-confirm-modal');
-
+        
         if (!confirmModal) {
             const modalHtml = `
                 <div class="modal fade" id="task-delete-confirm-modal" tabindex="-1" aria-hidden="true">
@@ -1011,30 +1122,30 @@ export class TaskManager {
                     </div>
                 </div>
             `;
-
+            
             const modalContainer = document.createElement('div');
             modalContainer.innerHTML = modalHtml;
             document.body.appendChild(modalContainer.firstElementChild);
             confirmModal = document.getElementById('task-delete-confirm-modal');
         }
-
+        
         // Set up the confirmation modal
         const modal = new bootstrap.Modal(confirmModal);
         const deleteBtn = confirmModal.querySelector('#confirm-delete-btn');
-
+        
         // Update modal content with task name
-        confirmModal.querySelector('.modal-body p:first-child').textContent =
+        confirmModal.querySelector('.modal-body p:first-child').textContent = 
             `Are you sure you want to delete the task "${taskTitle}"?`;
-
+        
         // Remove old event listeners if any
         const newDeleteBtn = deleteBtn.cloneNode(true);
         deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
-
+        
         // Show the modal and wait for user decision
         return new Promise((resolve) => {
             newDeleteBtn.addEventListener('click', async () => {
                 modal.hide();
-
+                
                 try {
                     const response = await this.apiClient.delete(`/tasks/${taskId}`);
                     if (response.ok) {
@@ -1051,12 +1162,12 @@ export class TaskManager {
                     resolve(false);
                 }
             });
-
+            
             // Handle cancel
             confirmModal.addEventListener('hidden.bs.modal', () => {
                 resolve(false);
             }, { once: true });
-
+            
             modal.show();
         });
     }
@@ -1066,10 +1177,10 @@ export class TaskManager {
 
         // Generate unique ID for this viewer
         const viewerId = `json-viewer-${++this.jsonViewerCount}`;
-
+        
         // Create json-viewer element
         const viewerHtml = `<json-viewer id="${viewerId}"></json-viewer>`;
-
+        
         // Schedule data binding after DOM insertion
         setTimeout(() => {
             const viewer = document.getElementById(viewerId);
@@ -1084,10 +1195,127 @@ export class TaskManager {
                 }
             }
         }, 10);
-
+        
         return viewerHtml;
     }
 
+    // Generate user-friendly display names and badges for timeline operations
+    getOperationDisplayInfo(operation) {
+        const operationType = operation.operation_type;
+        const agentType = operation.agent_type;
+        const outputData = operation.output_data || {};  // Use output_data, not result_data
+        
+        let displayName = '';
+        let badges = [];
+        
+        // Generate user-friendly names based on operation type
+        switch (operationType) {
+            case 'topic_decomposition':
+                displayName = 'Topic Decomposition';
+                badges.push('<span class="badge bg-primary ms-2">topic_decomposition</span>');
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            case 'research_plan':
+                displayName = 'Research Planning';
+                badges.push('<span class="badge bg-primary ms-2">research_plan</span>');
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            case 'mcp_search':
+                // Show focus area as title and provider as badge
+                const focusArea = outputData.focus_area || outputData.subtopic || 'Search';
+                const providersUsed = outputData.providers_used || [];
+                const provider = providersUsed.length > 0 ? providersUsed[0] : 'MCP';
+                
+                // Use focus area as the display name
+                displayName = focusArea;
+                
+                // Show provider as badge
+                badges.push(`<span class="badge bg-success ms-2">${provider}</span>`);
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            case 'search_summary':
+                displayName = 'Search Summary';
+                badges.push('<span class="badge bg-primary ms-2">search_summary</span>');
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            case 'reasoning_analysis':
+                displayName = 'Reasoning Analysis';
+                badges.push('<span class="badge bg-primary ms-2">reasoning_analysis</span>');
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            case 'dok_taxonomy':
+                displayName = 'DOK Taxonomy';
+                badges.push('<span class="badge bg-primary ms-2">dok_taxonomy</span>');
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+                break;
+                
+            default:
+                // Fallback to operation name or type
+                displayName = operation.operation_name || this.formatOperationName(operationType);
+                badges.push(`<span class="badge bg-primary ms-2">${operationType}</span>`);
+                if (agentType) badges.push(`<span class="badge bg-info ms-1">${agentType}</span>`);
+        }
+        
+        return { displayName, badges };
+    }
+    
+    // Helper method to format operation names nicely
+    formatOperationName(operationType) {
+        return operationType
+            .split('_')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+    }
+    
+    // Calculate evidence statistics from operations data
+    calculateEvidenceStats(operations) {
+        let totalSources = 0;
+        let searchProvidersUsed = new Set();
+        
+        // Ensure operations is an array
+        const operationsArray = Array.isArray(operations) ? operations : [];
+        
+        console.log('[Evidence Stats] Total operations:', operationsArray.length);
+        
+        operationsArray.forEach(operation => {
+            // Use output_data, not result_data - this is the actual field name
+            const outputData = operation.output_data || {};
+            
+            // Track search providers from MCP search operations
+            if (operation.operation_type === 'mcp_search') {
+                console.log('[Evidence Stats] MCP search operation found:', operation);
+                // Track search providers used
+                const providers = outputData.providers_used || [];
+                console.log('[Evidence Stats] Providers used:', providers);
+                providers.forEach(provider => {
+                    if (provider && provider !== 'unknown') {
+                        searchProvidersUsed.add(provider);
+                    }
+                });
+            }
+            
+            // Count actual processed sources from search summary operations
+            // This gives us the true count of evidence items (sources that were summarized)
+            if (operation.operation_type === 'search_summary') {
+                const totalSummaries = outputData.total_summaries || 0;
+                console.log('[Evidence Stats] Search summary found with', totalSummaries, 'summaries');
+                totalSources = totalSummaries; // Use assignment, not addition, to avoid double counting
+            }
+        });
+        
+        console.log('[Evidence Stats] Final stats - Sources:', totalSources, 'Providers:', Array.from(searchProvidersUsed));
+        
+        return {
+            total_evidence_items: totalSources,
+            search_providers_used: Array.from(searchProvidersUsed)
+        };
+    }
+    
     // Utility methods
     getStatusClass(status) {
         const statusMap = {
@@ -1111,12 +1339,12 @@ export class TaskManager {
 
     calculateDuration(startTime, endTime) {
         if (!startTime || !endTime) return null;
-
+        
         const start = new Date(startTime);
         const end = new Date(endTime);
         const diffMs = end - start;
         const diffSeconds = Math.round(diffMs / 1000);
-
+        
         if (diffSeconds < 60) {
             return `${diffSeconds}s`;
         } else if (diffSeconds < 3600) {
@@ -1141,6 +1369,21 @@ export class TaskManager {
                     <p>${this.escapeHtml(message)}</p>
                 </div>
             `;
+        }
+    }
+
+    // Helper method to get task status
+    async getTaskStatus(taskId) {
+        try {
+            const response = await this.apiClient.get(`/tasks/${taskId}`);
+            if (response.ok) {
+                const task = await response.json();
+                return task.status;
+            }
+            return null;
+        } catch (error) {
+            console.log('Error getting task status:', error);
+            return null;
         }
     }
 }

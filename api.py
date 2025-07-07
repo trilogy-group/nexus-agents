@@ -6,14 +6,14 @@ import argparse
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 import redis.asyncio as redis
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -52,7 +52,12 @@ def detect_and_parse_json_strings(data: Any) -> Any:
 from src.persistence.postgres_knowledge_base import PostgresKnowledgeBase
 from src.orchestration.task_manager import TaskStatus
 from src.orchestration.research_orchestrator import ResearchOrchestrator
+from src.orchestration.parallel_task_coordinator import ParallelTaskCoordinator
+from src.orchestration.rate_limiter import RateLimiter
 from src.orchestration.communication_bus import CommunicationBus
+from src.api.dok_taxonomy_endpoints import router as dok_router
+from src.agents.research.dok_workflow_orchestrator import DOKWorkflowOrchestrator
+from src.models.research_types import ResearchType, DataAggregationConfig
 from src.llm import LLMClient
 
 # Load environment variables
@@ -70,10 +75,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include DOK taxonomy router
+app.include_router(dok_router)
+
 # Global instances
 redis_client: Optional[redis.Redis] = None
 task_queue_key = "nexus:task_queue"
 global_research_orchestrator: Optional[ResearchOrchestrator] = None
+global_task_coordinator: Optional[ParallelTaskCoordinator] = None
 
 
 # Define the API models
@@ -86,8 +95,11 @@ class ResearchTaskCreate(BaseModel):
 
 class ResearchTaskQuery(BaseModel):
     """Model for creating a research query."""
-    research_query: str
+    title: str  # Short reference identifier for the task
+    research_query: str  # The actual inquiry/question to research
     user_id: Optional[str] = None
+    research_type: ResearchType = ResearchType.ANALYTICAL_REPORT
+    aggregation_config: Optional[DataAggregationConfig] = None
 
 
 class ResearchTaskStatus(BaseModel):
@@ -127,7 +139,7 @@ async def get_kb(read_only: bool = True):
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections and systems on startup."""
-    global redis_client, global_kb, global_research_orchestrator
+    global redis_client, global_kb, global_research_orchestrator, global_task_coordinator
     
     # Get configuration from environment variables
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -158,14 +170,40 @@ async def startup_event():
         
         llm_client = LLMClient(config_path=os.getenv("LLM_CONFIG", "config/llm_config.json"))
         
-        global_research_orchestrator = ResearchOrchestrator(
-            communication_bus=communication_bus,
-            llm_client=llm_client,
-            knowledge_base=global_kb
+        # Initialize Enhanced Research Orchestrator components
+        llm_config = {
+            "api_key": os.getenv("OPENAI_API_KEY"),
+            "model": "gpt-4",
+            "temperature": 0.7
+        }
+        
+        # Initialize rate limiter
+        rate_limiter = RateLimiter()
+        # Rate limiter already has default limits configured
+        
+        # Initialize task coordinator
+        global_task_coordinator = ParallelTaskCoordinator(
+            redis_client=redis_client,
+            rate_limiter=rate_limiter,
+            worker_pool_size=10
         )
-        print("Initialized Research Orchestrator")
+        
+        # Initialize DOK workflow orchestrator
+        dok_workflow = DOKWorkflowOrchestrator(
+            llm_client=llm_client
+        )
+        
+        # Initialize consolidated Research Orchestrator with enhanced features
+        global_research_orchestrator = ResearchOrchestrator(
+            task_coordinator=global_task_coordinator,
+            dok_workflow=dok_workflow,
+            db=global_kb,
+            llm_config=llm_config
+        )
+        print("Initialized Research Orchestrator with enhanced features")
+        
     except Exception as e:
-        print(f"Failed to initialize Research Orchestrator: {e}")
+        print(f"Failed to initialize Research Orchestrators: {e}")
         # Don't raise - API can still function without orchestrator
 
 
@@ -191,40 +229,54 @@ async def root():
     return {"message": "Nexus Agents API", "status": "running"}
 
 
-@app.post("/tasks", response_model=Dict[str, str])
-async def create_task(task: ResearchTaskCreate):
-    """Create a new research task and enqueue it for processing."""
-    global redis_client
-    if not redis_client:
-        raise HTTPException(status_code=503, detail="System not initialized")
+# Research Workflow API Endpoint
+@app.post("/tasks", response_model=dict)
+async def create_research_task(task: ResearchTaskQuery):
+    """Create a new research task and start the workflow."""
     
-    # Generate task ID
-    task_id = str(uuid.uuid4())
+    # Validate orchestrator is initialized
+    if not global_research_orchestrator:
+        raise HTTPException(status_code=500, detail="Research Orchestrator not initialized")
     
-    # Prepare task for queue
-    task_data = {
-        "task_id": task_id,
-        "title": task.title,
-        "description": task.description,
-        "continuous_mode": task.continuous_mode,
-        "continuous_interval_hours": task.continuous_interval_hours,
-        "created_at": datetime.utcnow().isoformat()
-    }
+    # Route to appropriate workflow based on research type
+    if task.research_type == ResearchType.ANALYTICAL_REPORT:
+        # Use analytical report workflow
+        try:
+            # Create task in database first
+            async with get_kb() as kb:
+                task_id = await kb.create_research_task(
+                    title=task.title,  # Pass the title separately
+                    research_query=task.research_query,
+                    user_id=task.user_id,
+                    research_type=task.research_type.value,
+                    aggregation_config=task.aggregation_config.dict() if task.aggregation_config else None
+                )
+            
+            # Start the analytical report workflow
+            asyncio.create_task(
+                global_research_orchestrator.execute_analytical_report(
+                    task_id=task_id,
+                    query=task.research_query
+                )
+            )
+            
+            return {
+                "task_id": task_id,
+                "research_query": task.research_query,
+                "research_type": task.research_type.value,
+                "status": "pending",
+                "message": "Analytical report task started successfully"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create research task: {str(e)}")
     
-    # Enqueue task for processing
-    await redis_client.rpush(task_queue_key, json.dumps(task_data))
+    elif task.research_type == ResearchType.DATA_AGGREGATION:
+        # TODO: Implement data aggregation workflow
+        raise HTTPException(status_code=501, detail="Data aggregation research type not yet implemented")
     
-    # Publish task creation event
-    await redis_client.publish(
-        f"nexus:task_created",
-        json.dumps({
-            "task_id": task_id,
-            "title": task.title,
-            "timestamp": datetime.utcnow().isoformat()
-        })
-    )
-    
-    return {"task_id": task_id}
+    else:
+        # This should not happen with the current ResearchType enum
+        raise HTTPException(status_code=400, detail=f"Invalid research type: {task.research_type}")
 
 
 @app.get("/tasks", response_model=List[ResearchTaskStatus])
@@ -475,82 +527,14 @@ async def get_task_evidence(task_id: str):
         return evidence_summary
 
 
-# Research Workflow API Endpoints
-@app.post("/api/research/tasks", response_model=dict)
-async def create_research_task(task: ResearchTaskQuery):
-    """Create a new research task and start the workflow."""
-    if not global_research_orchestrator:
-        raise HTTPException(status_code=500, detail="Research Orchestrator not initialized")
-    
-    try:
-        task_id = await global_research_orchestrator.start_research_task(
-            research_query=task.research_query,
-            user_id=task.user_id
-        )
-        
-        return {
-            "task_id": task_id,
-            "research_query": task.research_query,
-            "status": "pending",
-            "message": "Research task started successfully"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create research task: {str(e)}")
-
-
-@app.get("/api/research/tasks/{task_id}/status")
-async def get_research_task_status(task_id: str):
-    """Get the status and progress of a research task."""
-    if not global_research_orchestrator:
-        raise HTTPException(status_code=500, detail="Research Orchestrator not initialized")
-    
-    try:
-        status = await global_research_orchestrator.get_research_task_status(task_id)
-        if not status:
-            raise HTTPException(status_code=404, detail="Research task not found")
-        
-        return status
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get task status: {str(e)}")
-
-
-@app.get("/api/research/tasks/{task_id}/report")
+@app.get("/tasks/{task_id}/report")
 async def get_research_report(task_id: str):
-    """Download the final research report in markdown format."""
-    if not global_research_orchestrator:
-        raise HTTPException(status_code=500, detail="Research Orchestrator not initialized")
-    
-    try:
-        report = await global_research_orchestrator.get_research_report(task_id)
-        if not report:
-            raise HTTPException(status_code=404, detail="Research report not found or not completed")
-        
-        return {
-            "task_id": task_id,
-            "report_markdown": report,
-            "format": "markdown"
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get research report: {str(e)}")
-
-
-@app.get("/api/research/tasks")
-async def list_research_tasks(user_id: Optional[str] = None):
-    """List all research tasks for a user."""
-    # This would need to be implemented in the knowledge base
+    """Get the research report for a task."""
     async with get_kb() as kb:
-        try:
-            # For now, return a placeholder - this would need a new method in PostgresKnowledgeBase
-            return {
-                "tasks": [],
-                "message": "Research task listing not yet implemented"
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to list tasks: {str(e)}")
+        report = await kb.get_research_report(task_id)
+        if not report:
+            raise HTTPException(status_code=404, detail="Report not found")
+        return Response(content=report, media_type="text/plain")
 
 
 def main():

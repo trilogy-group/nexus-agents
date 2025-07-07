@@ -9,7 +9,7 @@ import sys
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -64,7 +64,7 @@ class TestPostgresKnowledgeBase:
         await kb.update_task(
             task_id=task_id,
             status="completed",
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(timezone.utc),
             results={"result": "success"},
             summary="Task completed successfully"
         )
