@@ -662,8 +662,8 @@ class MinimalMCPSession:
             
             request = self._send_request("initialize", params)
             
-            # Wait for response
-            response = self._receive_response(timeout=10.0)
+            # Wait for response (increased timeout for slower MCP servers)
+            response = self._receive_response(timeout=30.0)
             
             if response and response.get("id") == request["id"]:
                 if "error" in response:
@@ -816,7 +816,7 @@ class MCPSearchClient:
         
         print(f"🎯 Initialized {len(self.servers)} search providers successfully")
     
-    async def search_linkup(self, query: str, max_results: int = 10) -> Dict[str, Any]:
+    async def search_linkup(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
         """Search using Linkup."""
         server_config = self.config_loader.get_server_config("linkup")
         if not server_config:
@@ -829,13 +829,55 @@ class MCPSearchClient:
             if env_value:
                 env_vars[env_var_name] = env_value
         
-        return await self.mcp_client.call_tool(
+        raw_result = await self.mcp_client.call_tool(
             "linkup",
             server_config["command"],
             "search-web",
             {"query": query, "depth": "standard"},
             env_vars
         )
+        
+        # Parse the nested MCP response structure
+        # Format: {"result":{"content":[{"text":"{\"results\":[{...}]}"}]}}
+        try:
+            if not raw_result:
+                return []
+            
+            # Extract content from the result
+            content_list = raw_result.get('content', [])
+            if not content_list:
+                return []
+            
+            # Get the first content item (should contain the JSON string)
+            content_item = content_list[0] if content_list else {}
+            text_content = content_item.get('text', '')
+            
+            if not text_content:
+                return []
+            
+            # Parse the JSON string that contains the actual search results
+            search_data = json.loads(text_content)
+            results = search_data.get('results', [])
+            
+            # Standardize the results format
+            standardized_results = []
+            for result in results[:max_results]:
+                standardized_result = {
+                    'content': result.get('content', ''),
+                    'text': result.get('content', ''),
+                    'title': result.get('name', 'Untitled'),
+                    'url': result.get('url', ''),
+                    'provider': 'linkup',
+                    'type': result.get('type', 'text')
+                }
+                standardized_results.append(standardized_result)
+            
+            return standardized_results
+            
+        except (json.JSONDecodeError, KeyError, AttributeError) as e:
+            print(f"Error parsing Linkup search response: {e}")
+            print(f"Raw result: {raw_result}")
+            return []
     
     async def search_exa(self, query: str, num_results: int = 10) -> Dict[str, Any]:
         """Search using Exa."""
@@ -986,43 +1028,309 @@ class MCPSearchClient:
             Resource content as string
         """
         return await self.mcp_client.read_resource(server_name, server_script, resource_uri, env_vars)
+    
+    async def get_available_tools(self) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Dynamically aggregate tools from all enabled MCP servers.
+        
+        Returns:
+            Dictionary mapping server names to their available tools
+        """
+        available_tools = {}
+        enabled_servers = self.config_loader.get_enabled_servers()
+        
+        for server_name, server_config in enabled_servers.items():
+            try:
+                # Get actual environment variables
+                config_env = server_config.get("env", {})
+                actual_env = {}
+                for env_var_name in config_env.keys():
+                    env_value = os.getenv(env_var_name)
+                    if env_value:
+                        actual_env[env_var_name] = env_value
+                
+                # List tools from this server
+                tools = await self.list_tools(
+                    server_name,
+                    server_config["command"],
+                    actual_env
+                )
+                
+                if tools:
+                    available_tools[server_name] = tools
+                    print(f"✅ Found {len(tools)} tools from {server_name}")
+                    
+            except Exception as e:
+                print(f"⚠️  Failed to list tools from {server_name}: {e}")
+                continue
+        
+        return available_tools
 
     async def search_web(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         """
-        Unified web search method that delegates to available search providers.
+        Unified web search method that dynamically uses available search providers.
         
         Args:
             query: Search query
             max_results: Maximum number of results to return
             
         Returns:
-            List of search results
+            List of search results with provider information
         """
-        # Try different search providers in order of preference
-        try:
-            # First try Linkup (most reliable for web search)
-            return await self.search_linkup(query, max_results)
-        except Exception as e:
-            print(f"Linkup search failed: {e}")
-            try:
-                # Fallback to Exa
-                return await self.search_exa(query, max_results)
-            except Exception as e2:
-                print(f"Exa search failed: {e2}")
+        # Get available tools from all enabled MCP servers
+        available_tools = await self.get_available_tools()
+        
+        # Define search tool patterns to look for
+        search_patterns = [
+            "search", "web_search", "search_web", "query", 
+            "find", "lookup", "discover"
+        ]
+        
+        # Define patterns for deep research tools to exclude
+        deep_research_patterns = [
+            "deep_research", "research_report", "comprehensive_research",
+            "detailed_research", "in_depth", "deep_dive"
+        ]
+        
+        all_results = []
+        providers_used = []
+        
+        # Try each server's search tools
+        for server_name, tools in available_tools.items():
+            # Find search-related tools, excluding deep research tools
+            search_tools = [
+                tool for tool in tools 
+                if any(pattern in tool.get("name", "").lower() for pattern in search_patterns)
+                and not any(deep_pattern in tool.get("name", "").lower() for deep_pattern in deep_research_patterns)
+            ]
+            
+            if not search_tools:
+                continue
+                
+            # Use the first available search tool from this server
+            for tool in search_tools:
                 try:
-                    # Last fallback to Perplexity
-                    result = await self.search_perplexity(query)
-                    # Convert Perplexity result to list format
-                    if isinstance(result, dict):
-                        return [result]
-                    elif isinstance(result, list):
-                        return result[:max_results]
+                    tool_name = tool.get("name")
+                    server_config = self.config_loader.get_server_config(server_name)
+                    if not server_config:
+                        continue
+                    
+                    # Get environment variables
+                    config_env = server_config.get("env", {})
+                    actual_env = {}
+                    for env_var_name in config_env.keys():
+                        env_value = os.getenv(env_var_name)
+                        if env_value:
+                            actual_env[env_var_name] = env_value
+                    
+                    # Prepare tool arguments based on tool schema
+                    tool_args = self._prepare_search_args(tool, query, max_results)
+                    
+                    # Call the tool
+                    result = await self.call_tool(
+                        server_name,
+                        server_config["command"],
+                        tool_name,
+                        tool_args,
+                        actual_env
+                    )
+                    
+                    # Process and standardize results
+                    processed_results = self._process_search_results(
+                        result, server_name, tool_name
+                    )
+                    
+                    if processed_results:
+                        all_results.extend(processed_results)
+                        providers_used.append(server_name)
+                        print(f"✅ Got {len(processed_results)} results from {server_name}")
+                        
+                    # Stop if we have enough results
+                    if len(all_results) >= max_results:
+                        break
+                        
+                except Exception as e:
+                    print(f"⚠️  Search failed with {server_name}.{tool_name}: {e}")
+                    continue
+            
+            # Stop if we have enough results
+            if len(all_results) >= max_results:
+                break
+        
+        # Trim to max_results and add provider count metadata
+        final_results = all_results[:max_results]
+        
+        # Add metadata about providers used
+        for result in final_results:
+            result["providers_used"] = providers_used
+            result["total_providers"] = len(set(providers_used))
+        
+        if not final_results:
+            raise Exception(f"No search results found from {len(available_tools)} available MCP servers")
+            
+        return final_results
+    
+    def _prepare_search_args(self, tool: Dict[str, Any], query: str, max_results: int) -> Dict[str, Any]:
+        """Prepare arguments for a search tool based on its schema."""
+        # Common parameter mappings
+        args = {}
+        
+        # Get tool input schema
+        input_schema = tool.get("inputSchema", {}).get("properties", {})
+        
+        # Map query parameter
+        if "query" in input_schema:
+            args["query"] = query
+        elif "q" in input_schema:
+            args["q"] = query
+        elif "search" in input_schema:
+            args["search"] = query
+        elif "term" in input_schema:
+            args["term"] = query
+        elif "prompt" in input_schema:
+            args["prompt"] = query
+        
+        # Map max results parameter
+        if "max_results" in input_schema:
+            args["max_results"] = max_results
+        elif "num_results" in input_schema:
+            args["num_results"] = max_results
+        elif "limit" in input_schema:
+            args["limit"] = max_results
+        elif "count" in input_schema:
+            args["count"] = max_results
+        elif "n" in input_schema:
+            args["n"] = max_results
+        
+        return args
+    
+    def _process_search_results(
+        self, raw_result: Any, server_name: str, tool_name: str
+    ) -> List[Dict[str, Any]]:
+        """Process and standardize search results from different providers."""
+        results = []
+        
+        # Handle different result formats
+        if isinstance(raw_result, str):
+            # Try to parse as JSON
+            try:
+                import json
+                parsed = json.loads(raw_result)
+                if isinstance(parsed, list):
+                    raw_result = parsed
+                elif isinstance(parsed, dict):
+                    # Check for common result array keys
+                    if "results" in parsed:
+                        raw_result = parsed["results"]
+                    elif "items" in parsed:
+                        raw_result = parsed["items"]
+                    elif "data" in parsed:
+                        raw_result = parsed["data"]
                     else:
-                        return []
-                except Exception as e3:
-                    print(f"All search providers failed: Linkup({e}), Exa({e2}), Perplexity({e3})")
-                    return []
-
+                        raw_result = [parsed]
+                else:
+                    raw_result = [{
+                        "content": raw_result,
+                        "text": raw_result,
+                        "title": f"Result from {server_name}"
+                    }]
+            except:
+                # Treat as plain text
+                raw_result = [{
+                    "content": raw_result,
+                    "text": raw_result,
+                    "title": f"Result from {server_name}"
+                }]
+        elif isinstance(raw_result, dict):
+            # Handle MCP result format with content array
+            if "content" in raw_result and isinstance(raw_result["content"], list):
+                # Extract text from MCP content format
+                content_text = ""
+                for item in raw_result["content"]:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        content_text += item.get("text", "")
+                
+                # Try to parse the extracted text as JSON
+                try:
+                    import json
+                    parsed = json.loads(content_text)
+                    if isinstance(parsed, dict) and "results" in parsed:
+                        raw_result = parsed["results"]
+                    elif isinstance(parsed, list):
+                        raw_result = parsed
+                    else:
+                        raw_result = [parsed]
+                except:
+                    # If JSON parsing fails, treat as single result
+                    raw_result = [{
+                        "content": content_text,
+                        "text": content_text,
+                        "title": f"Result from {server_name}"
+                    }]
+            else:
+                # Single result
+                raw_result = [raw_result]
+        elif not isinstance(raw_result, list):
+            # Unknown format
+            raw_result = []
+        
+        # Standardize each result
+        for i, item in enumerate(raw_result):
+            if isinstance(item, str):
+                # Convert string to dict
+                item = {
+                    "content": item,
+                    "text": item,
+                    "title": f"Result {i+1} from {server_name}"
+                }
+            elif not isinstance(item, dict):
+                continue
+            
+            # DEBUG: Log the actual structure we're getting from MCP providers
+            print(f"🔍 DEBUG: MCP result structure from {server_name}.{tool_name}:")
+            print(f"   Available keys: {list(item.keys()) if isinstance(item, dict) else 'N/A'}")
+            print(f"   Raw item: {str(item)[:300]}...")
+            
+            # Standardize fields with more comprehensive field mapping
+            content = item.get("content") or item.get("text") or item.get("snippet") or item.get("body") or ""
+            
+            # Try multiple possible field names for title
+            title = (
+                item.get("title") or 
+                item.get("name") or 
+                item.get("headline") or 
+                item.get("subject") or 
+                item.get("summary") or 
+                f"Result {i+1}"
+            )
+            
+            # Try multiple possible field names for URL
+            url = (
+                item.get("url") or 
+                item.get("link") or 
+                item.get("href") or 
+                item.get("web_url") or 
+                item.get("source") or 
+                ""
+            )
+            
+            standardized = {
+                "content": content,
+                "text": content,
+                "title": title,
+                "url": url,
+                "provider": server_name,
+                "tool": tool_name,
+                "metadata": {
+                    "original_provider": server_name,
+                    "tool_used": tool_name,
+                    **item.get("metadata", {})
+                }
+            }
+            
+            results.append(standardized)
+        
+        return results
 
 # Example usage
 async def main():

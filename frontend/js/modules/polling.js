@@ -3,8 +3,10 @@ export class PollingManager {
     constructor(taskManager) {
         this.taskManager = taskManager;
         this.pollInterval = null;
-        this.pollFrequency = 30000; // 30 seconds
+        this.pollFrequency = 5000; // 5 seconds for active tasks
         this.lastTaskStates = {};
+        this.completedReports = new Set(); // Track reports we've already loaded
+        this.pollingTasks = new Map(); // Track which tasks are being polled
     }
 
     startSmartPolling() {
@@ -30,71 +32,120 @@ export class PollingManager {
 
     async refreshTasksIntelligently() {
         try {
-            const response = await this.taskManager.apiClient.get('/tasks');
-            if (!response.ok) {
-                console.error('Failed to refresh tasks during polling');
+            // Only poll for active tasks (not completed or failed)
+            const activeTasks = Array.from(this.pollingTasks.values()).filter(task => 
+                task.status !== 'completed' && task.status !== 'failed'
+            );
+            
+            if (activeTasks.length === 0) {
+                console.log('No active tasks to poll');
                 return;
             }
-
-            const tasks = await response.json();
             
-            // Check if we need to update the display
-            const needsUpdate = this.checkIfUpdateNeeded(tasks);
-            
-            if (needsUpdate) {
-                console.log('Task states changed, updating display');
-                
-                // Save current timeline card states before refresh
-                const currentStates = { ...this.taskManager.timelineCardStates };
-                
-                // Refresh the display
-                await this.taskManager.displayTasks(tasks);
-                
-                // Restore timeline card states after a short delay
-                setTimeout(() => {
-                    this.taskManager.timelineCardStates = currentStates;
-                    this.taskManager.restoreTimelineCardStates();
-                }, 100);
+            // Poll individual task statuses and operations for active tasks only
+            for (const task of activeTasks) {
+                await this.pollTaskStatus(task.task_id);
+                await this.pollTaskOperations(task.task_id);
             }
             
-            // Update last known states
-            this.updateLastTaskStates(tasks);
+            // Poll for completed task reports that haven't been loaded yet
+            const completedTasks = Array.from(this.pollingTasks.values()).filter(task => 
+                task.status === 'completed' && !this.completedReports.has(task.task_id)
+            );
+            
+            // Debug logging to understand polling behavior
+            if (completedTasks.length > 0) {
+                console.log(`Polling reports for ${completedTasks.length} completed tasks:`, 
+                    completedTasks.map(t => `${t.task_id} (${t.status})`));
+            }
+            
+            for (const task of completedTasks) {
+                console.log(`Attempting to poll report for completed task: ${task.task_id}`);
+                await this.pollTaskReport(task.task_id);
+            }
             
         } catch (error) {
             console.error('Error during intelligent polling:', error);
         }
     }
-
-    checkIfUpdateNeeded(tasks) {
-        // Check if number of tasks changed
-        const currentTaskIds = new Set(tasks.map(t => t.task_id));
-        const lastTaskIds = new Set(Object.keys(this.lastTaskStates));
-        
-        if (currentTaskIds.size !== lastTaskIds.size) {
-            return true;
-        }
-        
-        // Check if any task status changed
-        for (const task of tasks) {
-            const lastState = this.lastTaskStates[task.task_id];
-            if (!lastState || 
-                lastState.status !== task.status || 
-                lastState.updated_at !== task.updated_at) {
-                return true;
+    
+    async pollTaskStatus(taskId) {
+        try {
+            const response = await this.taskManager.apiClient.get(`/tasks/${taskId}`);
+            if (!response.ok) return;
+            
+            const task = await response.json();
+            const previousTask = this.pollingTasks.get(taskId);
+            
+            // Update our tracking
+            this.pollingTasks.set(taskId, task);
+            
+            // Update UI if status changed
+            if (!previousTask || previousTask.status !== task.status) {
+                console.log(`Task ${taskId} status changed: ${previousTask?.status || 'new'} -> ${task.status}`);
+                await this.taskManager.updateTaskCard(task);
             }
+        } catch (error) {
+            console.error(`Error polling task ${taskId} status:`, error);
         }
-        
-        return false;
+    }
+    
+    async pollTaskOperations(taskId) {
+        try {
+            const response = await this.taskManager.apiClient.get(`/tasks/${taskId}/operations`);
+            if (!response.ok) return;
+            
+            const operations = await response.json();
+            this.taskManager.displayExecutedAgents(taskId, operations.operations || operations.timeline || []);
+        } catch (error) {
+            console.error(`Error polling task ${taskId} operations:`, error);
+        }
+    }
+    
+    async pollTaskReport(taskId) {
+        try {
+            const response = await this.taskManager.apiClient.get(`/tasks/${taskId}/report`);
+            if (response.ok) {
+                console.log(`Report available for task ${taskId}`);
+                this.taskManager.fetchAndDisplayResearchReport(taskId);
+                this.completedReports.add(taskId);
+            }
+        } catch (error) {
+            // Report not ready yet, will retry next poll
+        }
     }
 
-    updateLastTaskStates(tasks) {
-        this.lastTaskStates = {};
+    // Initialize polling with current tasks
+    initializeWithTasks(tasks) {
+        this.pollingTasks.clear();
+        this.completedReports.clear();
+        
         tasks.forEach(task => {
-            this.lastTaskStates[task.task_id] = {
-                status: task.status,
-                updated_at: task.updated_at
-            };
+            this.pollingTasks.set(task.task_id, task);
+            // Mark completed reports as already loaded if they exist
+            if (task.status === 'completed' && task.has_report) {
+                this.completedReports.add(task.task_id);
+            }
         });
+    }
+    
+    // Add a new task to polling
+    addTask(task) {
+        console.log(`Adding new task to polling: ${task.task_id} with status: ${task.status}`);
+        this.pollingTasks.set(task.task_id, task);
+        
+        // Ensure new tasks are not marked as having reports
+        if (task.status !== 'completed') {
+            this.completedReports.delete(task.task_id);
+        }
+    }
+    
+    // Update task status in polling tracker
+    updateTaskStatus(taskId, status) {
+        const task = this.pollingTasks.get(taskId);
+        if (task) {
+            task.status = status;
+        }
     }
 
     setPollFrequency(frequency) {
