@@ -81,6 +81,17 @@ npm run build
 npm link --force
 cd ../../..
 
+# Linkup MCP Server (Local JS)
+echo "Installing Linkup MCP server (local JS)..."
+if [ ! -d "external_mcp_servers/linkup-js-mcp" ]; then
+    git clone https://github.com/LinkupPlatform/js-mcp-server external_mcp_servers/linkup-js-mcp
+fi
+cd external_mcp_servers/linkup-js-mcp
+npm install --yes
+npm run build
+npm link --force
+cd ../..
+
 # Python MCP servers
 echo "📦 Installing Python MCP servers..."
 

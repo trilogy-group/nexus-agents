@@ -22,13 +22,15 @@ def check_api_keys(config):
     """Check if required API keys are present"""
     missing_keys = []
     
+    # Config has servers as top-level keys, not nested under 'mcp_servers'
     for server_name, server_config in config.items():
         if not server_config.get('enabled', False):
             continue
             
-        env_config = server_config.get('env', {})
-        for env_var in env_config.keys():
-            if not os.getenv(env_var):
+        # Check for API keys in env section
+        env_vars = server_config.get('env', {})
+        for env_var, default_value in env_vars.items():
+            if not os.getenv(env_var) and default_value == "":
                 missing_keys.append(f"{server_name}: {env_var}")
     
     return missing_keys
@@ -42,21 +44,21 @@ def check_server_availability(config):
             continue
             
         try:
-            if server_config['type'] == 'nodejs':
-                # For Node.js servers, check if the external directory exists and package.json is present
-                server_dir = Path('external_mcp_servers') / server_config.get('directory', server_name)
-                if not server_dir.exists():
-                    unavailable_servers.append(server_name)
-                elif not (server_dir / 'package.json').exists():
+            if server_config['type'] == 'node':
+                # Check if npm package is available
+                result = subprocess.run(
+                    ['npm', 'list', '-g', server_config['package']], 
+                    capture_output=True, 
+                    text=True
+                )
+                if result.returncode != 0:
                     unavailable_servers.append(server_name)
             elif server_config['type'] == 'python':
-                # Check if Python package is available by importing from the correct directory
-                server_dir = Path('external_mcp_servers') / server_config.get('directory', server_name)
+                # Check if Python package is available
                 result = subprocess.run(
                     ['uv', 'run', 'python', '-c', f'import {server_config["package"].replace("-", "_")}'], 
                     capture_output=True, 
-                    text=True,
-                    cwd=server_dir if server_dir.exists() else None
+                    text=True
                 )
                 if result.returncode != 0:
                     unavailable_servers.append(server_name)
@@ -67,64 +69,33 @@ def check_server_availability(config):
 
 def main():
     """Main validation function"""
-    print(" Validating MCP server setup...")
+    print("🔍 Validating MCP server setup...")
     
     try:
         config = load_mcp_config()
     except Exception as e:
-        print(f" Failed to load MCP configuration: {e}")
+        print(f"❌ Failed to load MCP configuration: {e}")
         return False
     
-    # Get enabled servers
-    enabled_servers = [name for name, conf in config.items() if conf.get('enabled', False)]
-    
-    if not enabled_servers:
-        print("  No MCP servers are enabled in the configuration.")
-        print("Enable at least one server in config/mcp_config.json to use MCP functionality.")
-        return True  # Not an error, just no servers enabled
-    
-    # Check API keys and server availability
+    # Check API keys
     missing_keys = check_api_keys(config)
-    unavailable_servers = check_server_availability(config)
-    
-    # Determine working servers (enabled, with API keys, and available)
-    servers_with_missing_keys = {key.split(': ')[0] for key in missing_keys}
-    working_servers = [
-        server for server in enabled_servers 
-        if server not in servers_with_missing_keys and server not in unavailable_servers
-    ]
-    
-    # Show results
-    has_issues = bool(missing_keys or unavailable_servers)
-    
-    if working_servers:
-        print(" Working MCP servers:")
-        for server in working_servers:
-            print(f"   - {server}")
-    
     if missing_keys:
-        print("  MCP servers missing API keys:")
+        print("⚠️  Missing required API keys:")
         for key in missing_keys:
-            server_name = key.split(': ')[0]
-            env_var = key.split(': ')[1]
-            print(f"   - {server_name}: {env_var}")
+            print(f"   - {key}")
+        print("\nPlease set these environment variables before running the application.")
+        return False
     
+    # Check server availability
+    unavailable_servers = check_server_availability(config)
     if unavailable_servers:
-        print(" Unavailable MCP servers:")
+        print("❌ Unavailable MCP servers:")
         for server in unavailable_servers:
             print(f"   - {server}")
-    
-    if has_issues:
-        if missing_keys:
-            print("\nPlease set the missing environment variables before running the application.")
-        if unavailable_servers:
-            print("Please run 'scripts/setup_mcp_servers.sh' to install missing servers.")
+        print("\nPlease run 'scripts/setup_mcp_servers.sh' to install missing servers.")
         return False
     
-    if not working_servers:
-        print("  No MCP servers are fully operational.")
-        return False
-    
+    print("✅ All MCP servers are properly configured and available!")
     return True
 
 if __name__ == "__main__":

@@ -33,14 +33,14 @@
     "description": "AI-powered search with Perplexity"
   },
   "linkup": {
-    "name": "Linkup",
-    "command": "",
-    "type": "remote", 
-    "url": "https://mcp.linkup.so/sse",
     "enabled": true,
+    "type": "nodejs",
+    "package": "linkup-mcp-server",
+    "command": "npx -y linkup-mcp-server",
     "env": {
       "LINKUP_API_KEY": ""
     },
-    "description": "Web search with Linkup (remote MCP server)"
+    "directory": "linkup-js-mcp",
+    "description": "Web search with Linkup (local JS MCP server)"
   }
 }
