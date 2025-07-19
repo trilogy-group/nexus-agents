@@ -632,8 +632,8 @@ class ResearchOrchestrator:
                     error_msg += f" Parsing errors: {'; '.join(parsing_errors)}"
                 raise ValueError(error_msg)
             
-            # Limit to top 5 results per query
-            final_results = filtered_results[:5]
+            # Limit to top 50 results per query for comprehensive research
+            final_results = filtered_results[:50]
             logger.info(f"MCP search successful: {len(final_results)} usable results from {len(results)} total for query '{enhanced_query}'")
             
             return final_results

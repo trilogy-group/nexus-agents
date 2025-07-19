@@ -348,6 +348,7 @@ class RemoteMCPSession:
         self.sse_response = None
         self.responses = {}  # Store responses by request ID
         self.message_endpoint = None
+        self._endpoint_ready = False
     
     async def _send_sse_message(self, method: str, params: dict = None) -> dict:
         """Send a JSON-RPC message via SSE and wait for response."""
@@ -381,33 +382,56 @@ class RemoteMCPSession:
             
             print(f"✅ SSE connection established")
             
-            # Parse SSE events to get the message endpoint
+            # Parse initial SSE events to get the message endpoint
+            # We need to read just enough to get the endpoint, then preserve the stream
             current_event = None
-            async for line in self.sse_response.content:
-                line = line.decode('utf-8').strip()
-                print(f"📨 SSE: {line}")
-                
-                if line.startswith('event:'):
-                    current_event = line[6:].strip()
-                elif line.startswith('data:'):
-                    data = line[5:].strip()
-                    if current_event == 'endpoint' and data:
-                        # Extract the message endpoint path
-                        message_endpoint = data
-                        if not message_endpoint.startswith('http'):
-                            # Construct full URL from base URL and path
-                            from urllib.parse import urljoin
-                            message_endpoint = urljoin(self.base_url, message_endpoint)
-                        
-                        print(f"📍 Got message endpoint: {message_endpoint}")
-                        self.message_endpoint = message_endpoint
+            line_count = 0
+            max_lines = 10  # Reduced - we only need the endpoint event
+            
+            # Read SSE lines to get endpoint, but don't consume the entire stream
+            try:
+                async for line in self.sse_response.content:
+                    line = line.decode('utf-8').strip()
+                    print(f"📨 SSE: {line}")
+                    
+                    line_count += 1
+                    if line_count > max_lines:
+                        print(f"⚠️ SSE parsing timeout after {max_lines} lines")
                         break
-                elif line == '':
-                    # Empty line marks end of event
-                    current_event = None
+                    
+                    if line.startswith('event:'):
+                        current_event = line[6:].strip()
+                    elif line.startswith('data:'):
+                        data = line[5:].strip()
+                        if current_event == 'endpoint' and data:
+                            # Extract the message endpoint path
+                            message_endpoint = data
+                            if not message_endpoint.startswith('http'):
+                                # Construct full URL from base URL and path
+                                from urllib.parse import urljoin
+                                message_endpoint = urljoin(self.base_url, message_endpoint)
+                            
+                            print(f"📍 Got message endpoint: {message_endpoint}")
+                            self.message_endpoint = message_endpoint
+                            self._endpoint_ready = True
+                            # Break immediately after getting endpoint to preserve stream
+                            break
+                    elif line == '':
+                        # Empty line marks end of event
+                        current_event = None
+                        
+            except Exception as e:
+                print(f"⚠️ Error parsing SSE endpoint: {e}")
+                # Continue anyway if we got the endpoint
             
             if not hasattr(self, 'message_endpoint') or not self.message_endpoint:
                 raise Exception("Failed to get message endpoint from SSE stream")
+        
+        # Small delay to allow server to fully set up the session
+        # This may prevent race conditions where the session isn't ready yet
+        import asyncio
+        await asyncio.sleep(0.5)
+        print("🕰️ Allowing server session setup time...")
         
         # Send the message to the message endpoint
         print(f"📤 Sending: {method} -> {json.dumps(payload)}")
@@ -441,47 +465,76 @@ class RemoteMCPSession:
             return {"error": str(e)}
     
     async def _read_sse_response(self, request_id: int) -> dict:
-        """Read response from SSE stream."""
+        """Read response from SSE stream with proper timeout and stream management."""
+        import asyncio
+        
+        # Check if we already have this response cached
+        if request_id in self.responses:
+            response = self.responses.pop(request_id)
+            print(f"📥 Using cached JSON-RPC response: {json.dumps(response)}")
+            return response
+            
         try:
-            timeout_counter = 0
             current_event = None
+            lines_read = 0
+            max_lines = 200  # Increased timeout for tool calls
             
-            async for line in self.sse_response.content:
-                line = line.decode('utf-8').strip()
-                print(f"📨 SSE Response: {line}")
-                
-                if line.startswith('event:'):
-                    current_event = line[6:].strip()
-                elif line.startswith('data:'):
-                    data = line[5:].strip()
-                    if current_event == 'message' and data:
-                        try:
-                            # Parse JSON-RPC response
-                            event_data = json.loads(data)
+            # Use asyncio.wait_for for proper timeout handling
+            async def read_with_timeout():
+                nonlocal lines_read
+                try:
+                    async for line in self.sse_response.content:
+                        line = line.decode('utf-8').strip()
+                        if line:  # Only print non-empty lines
+                            print(f"📨 SSE Response: {line}")
+                        
+                        lines_read += 1
+                        if lines_read > max_lines:
+                            print(f"⏰ SSE timeout after {max_lines} lines")
+                            break
+                        
+                        if line.startswith('event:'):
+                            current_event = line[6:].strip()
+                        elif line.startswith('data:'):
+                            data = line[5:].strip()
+                            if current_event == 'message' and data:
+                                try:
+                                    # Parse JSON-RPC response
+                                    event_data = json.loads(data)
+                                    
+                                    # Check if this is our response
+                                    if event_data.get('id') == request_id:
+                                        print(f"📥 Got JSON-RPC response: {json.dumps(event_data)}")
+                                        # CRITICAL: Don't return immediately - store response and continue reading
+                                        # This preserves the SSE connection for subsequent requests
+                                        self.responses[request_id] = event_data
+                                        return event_data
+                                    
+                                    # Store other responses for later use
+                                    if 'id' in event_data:
+                                        self.responses[event_data['id']] = event_data
+                                        
+                                except json.JSONDecodeError as e:
+                                    print(f"⚠️ Failed to parse SSE JSON response: {e}")
+                                    continue
+                        elif line == '':
+                            # Empty line marks end of event
+                            current_event = None
                             
-                            # Check if this is our response
-                            if event_data.get('id') == request_id:
-                                print(f"📥 Got JSON-RPC response: {json.dumps(event_data)}")
-                                return event_data
-                            
-                            # Store other responses
-                            if 'id' in event_data:
-                                self.responses[event_data['id']] = event_data
-                                
-                        except json.JSONDecodeError as e:
-                            print(f"⚠️ Failed to parse SSE JSON response: {e}")
-                            continue
-                elif line == '':
-                    # Empty line marks end of event
-                    current_event = None
-                
-                timeout_counter += 1
-                if timeout_counter > 100:  # Increase timeout for async responses
-                    print("⏰ Timeout waiting for SSE response")
-                    break
-                    
-            return {"error": "No matching response found in SSE stream"}
+                except Exception as stream_error:
+                    print(f"⚠️ SSE stream error: {stream_error}")
+                    # Don't break the connection on stream errors - just log and continue
+                    pass
+                        
+                return {"error": "No matching response found in SSE stream"}
             
+            # Wait up to 30 seconds for SSE response
+            result = await asyncio.wait_for(read_with_timeout(), timeout=30.0)
+            return result
+            
+        except asyncio.TimeoutError:
+            print("⏰ SSE response timeout (30s)")
+            return {"error": "SSE response timeout"}
         except Exception as e:
             print(f"❌ SSE read failed: {e}")
             return {"error": str(e)}
@@ -1066,7 +1119,7 @@ class MCPSearchClient:
         
         return available_tools
 
-    async def search_web(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    async def search_web(self, query: str, max_results: int = 50) -> List[Dict[str, Any]]:
         """
         Unified web search method that dynamically uses available search providers.
         
@@ -1083,7 +1136,11 @@ class MCPSearchClient:
         # Define search tool patterns to look for
         search_patterns = [
             "search", "web_search", "search_web", "query", 
-            "find", "lookup", "discover"
+            "find", "lookup", "discover",
+            # Perplexity-specific patterns
+            "perplexity_ask", "perplexity_search", "perplexity_query",
+            # Other AI-powered search patterns
+            "ask", "research", "answer"
         ]
         
         # Define patterns for deep research tools to exclude
@@ -1145,17 +1202,13 @@ class MCPSearchClient:
                         providers_used.append(server_name)
                         print(f"✅ Got {len(processed_results)} results from {server_name}")
                         
-                    # Stop if we have enough results
-                    if len(all_results) >= max_results:
-                        break
+                    # Continue to next tool instead of breaking early
                         
                 except Exception as e:
                     print(f"⚠️  Search failed with {server_name}.{tool_name}: {e}")
                     continue
             
-            # Stop if we have enough results
-            if len(all_results) >= max_results:
-                break
+            # Continue to next provider to ensure all are used
         
         # Trim to max_results and add provider count metadata
         final_results = all_results[:max_results]
@@ -1204,115 +1257,183 @@ class MCPSearchClient:
         
         return args
     
+    def _parse_firecrawl_sources(self, text: str) -> List[Dict[str, Any]]:
+        """Parse Firecrawl's multi-source text format."""
+        import re
+        sources = []
+        
+        # Split on URL markers to get individual source blocks
+        url_blocks = re.split(r'\n\n(?=URL:)', text)
+        
+        for block in url_blocks:
+            if not block.strip():
+                continue
+                
+            # Extract URL, Title, Description from each block
+            url_match = re.search(r'URL: (.+?)(?:\n|$)', block)
+            title_match = re.search(r'Title: (.+?)(?:\n|$)', block)
+            desc_match = re.search(r'Description: (.+?)(?:\n|$)', block)
+            
+            # DEBUG: Log extraction results
+            print(f"🔍 Firecrawl block parsing:")
+            print(f"  URL match: {url_match.group(1) if url_match else 'None'}")
+            print(f"  Title match: {title_match.group(1) if title_match else 'None'}")
+            print(f"  Description match: {desc_match.group(1) if desc_match else 'None'}")
+            
+            if url_match:
+                source = {
+                    'url': url_match.group(1).strip(),
+                    'title': title_match.group(1).strip() if title_match else '',
+                    'description': desc_match.group(1).strip() if desc_match else '',
+                    'content': desc_match.group(1).strip() if desc_match else block.strip(),
+                    'text': desc_match.group(1).strip() if desc_match else block.strip()
+                }
+                
+                # Don't overwrite title field - preserve the extracted title
+                    
+                sources.append(source)
+        
+        return sources
+    
     def _process_search_results(
         self, raw_result: Any, server_name: str, tool_name: str
     ) -> List[Dict[str, Any]]:
         """Process and standardize search results from different providers."""
         results = []
         
-        # Handle different result formats
-        if isinstance(raw_result, str):
+        # Extract results array from response
+        results_data = []
+        if isinstance(raw_result, dict):
+            # Handle MCP response format with content array
+            if "content" in raw_result:
+                content = raw_result["content"]
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict) and "text" in item:
+                            # Parse JSON if it's a string
+                            text = item["text"]
+                            if isinstance(text, str) and text.strip().startswith("{"):
+                                try:
+                                    import json
+                                    parsed = json.loads(text)
+                                    if "results" in parsed and isinstance(parsed["results"], list):
+                                        results_data.extend(parsed["results"])
+                                    else:
+                                        results_data.append(item)
+                                except json.JSONDecodeError:
+                                    results_data.append(item)
+                            else:
+                                # Special handling for Firecrawl text blobs
+                                if server_name == "firecrawl" and "URL:" in text:
+                                    # Parse Firecrawl's multi-source text format
+                                    firecrawl_sources = self._parse_firecrawl_sources(text)
+                                    results_data.extend(firecrawl_sources)
+                                else:
+                                    results_data.append(item)
+                        elif isinstance(item, dict):
+                            results_data.append(item)
+                        elif isinstance(item, str):
+                            results_data.append({"content": item})
+            elif "results" in raw_result:
+                results_data = raw_result["results"]
+            else:
+                results_data = [raw_result]
+        elif isinstance(raw_result, list):
+            results_data = raw_result
+        elif isinstance(raw_result, str):
             # Try to parse as JSON
             try:
                 import json
                 parsed = json.loads(raw_result)
                 if isinstance(parsed, list):
-                    raw_result = parsed
-                elif isinstance(parsed, dict):
-                    # Check for common result array keys
-                    if "results" in parsed:
-                        raw_result = parsed["results"]
-                    elif "items" in parsed:
-                        raw_result = parsed["items"]
-                    elif "data" in parsed:
-                        raw_result = parsed["data"]
-                    else:
-                        raw_result = [parsed]
+                    results_data = parsed
+                elif isinstance(parsed, dict) and "results" in parsed:
+                    results_data = parsed["results"]
                 else:
-                    raw_result = [{
-                        "content": raw_result,
-                        "text": raw_result,
-                        "title": f"Result from {server_name}"
-                    }]
-            except:
-                # Treat as plain text
-                raw_result = [{
-                    "content": raw_result,
-                    "text": raw_result,
-                    "title": f"Result from {server_name}"
-                }]
-        elif isinstance(raw_result, dict):
-            # Handle MCP result format with content array
-            if "content" in raw_result and isinstance(raw_result["content"], list):
-                # Extract text from MCP content format
-                content_text = ""
-                for item in raw_result["content"]:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        content_text += item.get("text", "")
-                
-                # Try to parse the extracted text as JSON
-                try:
-                    import json
-                    parsed = json.loads(content_text)
-                    if isinstance(parsed, dict) and "results" in parsed:
-                        raw_result = parsed["results"]
-                    elif isinstance(parsed, list):
-                        raw_result = parsed
-                    else:
-                        raw_result = [parsed]
-                except:
-                    # If JSON parsing fails, treat as single result
-                    raw_result = [{
-                        "content": content_text,
-                        "text": content_text,
-                        "title": f"Result from {server_name}"
-                    }]
-            else:
-                # Single result
-                raw_result = [raw_result]
-        elif not isinstance(raw_result, list):
-            # Unknown format
-            raw_result = []
+                    results_data = [parsed]
+            except json.JSONDecodeError:
+                results_data = [{"content": raw_result, "text": raw_result}]
+        else:
+            results_data = [{"content": str(raw_result)}]
         
         # Standardize each result
-        for i, item in enumerate(raw_result):
+        for i, item in enumerate(results_data):
             if isinstance(item, str):
                 # Convert string to dict
                 item = {
                     "content": item,
                     "text": item,
-                    "title": f"Result {i+1} from {server_name}"
+                    "title": f"Search Result {i+1} from {server_name}"
                 }
             elif not isinstance(item, dict):
                 continue
             
-            # DEBUG: Log the actual structure we're getting from MCP providers
-            print(f"🔍 DEBUG: MCP result structure from {server_name}.{tool_name}:")
-            print(f"   Available keys: {list(item.keys()) if isinstance(item, dict) else 'N/A'}")
-            print(f"   Raw item: {str(item)[:300]}...")
+
             
-            # Standardize fields with more comprehensive field mapping
+            # Standardize fields with comprehensive field mapping
             content = item.get("content") or item.get("text") or item.get("snippet") or item.get("body") or ""
             
-            # Try multiple possible field names for title
+
+            
+            # Try multiple possible field names for title with provider-specific mappings
             title = (
                 item.get("title") or 
                 item.get("name") or 
                 item.get("headline") or 
                 item.get("subject") or 
                 item.get("summary") or 
-                f"Result {i+1}"
+                item.get("description") or
+                item.get("displayName") or
+                item.get("page_title") or
+                item.get("article_title") or
+                # Exa-specific fields
+                item.get("pageTitle") or
+                item.get("text") or
+                # Firecrawl-specific fields
+                (item.get("metadata", {}).get("title") if isinstance(item.get("metadata"), dict) else None) or
+                (item.get("metadata", {}).get("ogTitle") if isinstance(item.get("metadata"), dict) else None) or
+                None
             )
+
             
-            # Try multiple possible field names for URL
+            # If no title found, try to extract from content or generate a meaningful one
+            if not title and content:
+                # Try to extract first line or sentence as title
+                first_line = content.split('\n')[0].strip()
+                if first_line and len(first_line) < 150:  # Reasonable title length
+                    title = first_line
+                else:
+                    # Extract first sentence
+                    import re
+                    sentences = re.split(r'[.!?]+', content)
+                    if sentences and len(sentences[0].strip()) < 150:
+                        title = sentences[0].strip()
+                    else:
+                        # Fallback to truncated content
+                        title = content[:100].strip() + "..." if len(content) > 100 else content.strip()
+            
+            # Final fallback
+            if not title:
+                title = f"Search Result {i+1} from {server_name}"
+            
+
+            
+            # Try multiple possible field names for URL with provider-specific mappings
             url = (
                 item.get("url") or 
                 item.get("link") or 
                 item.get("href") or 
                 item.get("web_url") or 
                 item.get("source") or 
+                # Exa-specific fields
+                item.get("pageUrl") or
+                item.get("uri") or
+                # Firecrawl-specific fields
+                (item.get("metadata", {}).get("sourceURL") if isinstance(item.get("metadata"), dict) else None) or
+                (item.get("metadata", {}).get("url") if isinstance(item.get("metadata"), dict) else None) or
                 ""
             )
+
             
             standardized = {
                 "content": content,

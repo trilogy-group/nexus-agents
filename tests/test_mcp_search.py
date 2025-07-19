@@ -177,15 +177,16 @@ class TestMCPSearch:
         mcp_client = MCPClient()
         
         try:
-            # Test LinkUp search functionality (remote server)
+            # Test LinkUp search functionality (local JS server)
             response = await mcp_client.call_tool(
                 server_name="linkup",
-                server_script="https://mcp.linkup.so/sse",
+                server_script="npx linkup-mcp-server",
                 tool_name="search-web",
                 arguments={
                     "query": "artificial intelligence",
                     "depth": "standard"
-                }
+                },
+                env_vars={'LINKUP_API_KEY': os.getenv('LINKUP_API_KEY')}
             )
             
             # Validate response content and show verbose output

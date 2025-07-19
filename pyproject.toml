@@ -22,6 +22,7 @@ dependencies = [
     "mcp-search-linkup",
     "httpx>=0.28.1",
     "asyncpg>=0.30.0",
+    "mcp>=1.9.4",
 ]
 
 [project.optional-dependencies]
