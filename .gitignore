@@ -226,3 +226,9 @@ external_mcp_servers/*/
 # Development files
 .dev_pids
 notes.txt
+
+# Allow nexus-frontend lib directory and other Next.js directories
+!nexus-frontend/lib/
+!nexus-frontend/app/
+!nexus-frontend/components/
+!nexus-frontend/public/

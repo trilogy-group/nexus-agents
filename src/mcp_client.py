@@ -1119,7 +1119,7 @@ class MCPSearchClient:
         
         return available_tools
 
-    async def search_web(self, query: str, max_results: int = 50) -> List[Dict[str, Any]]:
+    async def search_web(self, query: str, max_results: int = 4) -> List[Dict[str, Any]]:
         """
         Unified web search method that dynamically uses available search providers.
         

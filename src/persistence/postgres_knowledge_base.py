@@ -150,6 +150,7 @@ class PostgresKnowledgeBase:
         *,
         research_query: str,
         user_id: Optional[str] = None,
+        project_id: Optional[str] = None,
         research_type: str = "analytical_report",
         aggregation_config: Optional[Dict[str, Any]] = None,
         title: Optional[str] = None,
@@ -162,22 +163,33 @@ class PostgresKnowledgeBase:
         if not title:
             title = research_query[:100] + "..." if len(research_query) > 100 else research_query
         
+        # If no project_id provided, use the default project
+        if not project_id:
+            # Get the default project ID
+            async with self.pool.acquire() as conn:
+                default_project = await conn.fetchrow(
+                    "SELECT id FROM projects WHERE name = $1",
+                    "Default Project"
+                )
+                if default_project:
+                    project_id = default_project["id"]
+        
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO research_tasks (
                     task_id, title, description, research_query, 
-                    user_id, status, research_type, aggregation_config,
+                    user_id, project_id, status, research_type, aggregation_config,
                     external_resource, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
                 """,
                 task_id, title, research_query, research_query,
-                user_id, "pending", research_type,
+                user_id, project_id, "pending", research_type,
                 json.dumps(aggregation_config) if aggregation_config else None,
                 external_resource
             )
         
-        logger.info(f"Created research task {task_id} of type {research_type}")
+        logger.info(f"Created research task {task_id} of type {research_type} in project {project_id}")
         return task_id
     
     async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
@@ -739,60 +751,278 @@ class PostgresKnowledgeBase:
         """
         async with self.pool.acquire() as conn:
             async with conn.transaction():
-                # First, check if the task exists
-                task_exists = await conn.fetchval(
-                    "SELECT 1 FROM research_tasks WHERE task_id = $1",
-                    task_id
+                try:
+                    # First, check if the task exists
+                    task_exists = await conn.fetchval(
+                        "SELECT 1 FROM research_tasks WHERE task_id = $1",
+                        task_id
+                    )
+                    
+                    if not task_exists:
+                        logger.warning(f"Task {task_id} not found for deletion")
+                        return False
+                    
+                    logger.info(f"Starting deep delete for research task {task_id}")
+                    
+                    # Step 1: Get all operation IDs for this task (needed for evidence cleanup)
+                    operation_ids = await conn.fetch(
+                        "SELECT operation_id FROM task_operations WHERE task_id = $1",
+                        task_id
+                    )
+                    operation_id_list = [row['operation_id'] for row in operation_ids]
+                    
+                    # Step 2: Delete operation evidence (must be first due to foreign keys)
+                    if operation_id_list:
+                        evidence_count = await conn.execute(
+                            "DELETE FROM operation_evidence WHERE operation_id = ANY($1)",
+                            operation_id_list
+                        )
+                        logger.info(f"Deleted {evidence_count.split()[-1]} evidence records")
+                    
+                    # Step 3: Delete task operations
+                    operations_count = await conn.execute(
+                        "DELETE FROM task_operations WHERE task_id = $1",
+                        task_id
+                    )
+                    logger.info(f"Deleted {operations_count.split()[-1]} operations")
+                    
+                    # Step 4: Delete artifacts
+                    artifacts_count = await conn.execute(
+                        "DELETE FROM artifacts WHERE task_id = $1",
+                        task_id
+                    )
+                    logger.info(f"Deleted {artifacts_count.split()[-1]} artifacts")
+                    
+                    # Step 5: Delete research reports
+                    reports_count = await conn.execute(
+                        "DELETE FROM research_reports WHERE task_id = $1",
+                        task_id
+                    )
+                    logger.info(f"Deleted {reports_count.split()[-1]} research reports")
+                    
+                    # Step 6: Finally delete the main task record
+                    task_count = await conn.execute(
+                        "DELETE FROM research_tasks WHERE task_id = $1",
+                        task_id
+                    )
+                    logger.info(f"Deleted {task_count.split()[-1]} task record")
+                    
+                    logger.info(f"Successfully completed deep delete for research task {task_id}")
+                    return True
+                    
+                except Exception as e:
+                    logger.error(f"Failed to deep delete research task {task_id}: {e}")
+                    return False
+    
+    # Project Management Methods
+    
+    async def create_project(self, name: str, description: str = None, user_id: str = None) -> Optional[str]:
+        """Create a new project."""
+        try:
+            async with self.pool.acquire() as conn:
+                project_id = str(uuid.uuid4())
+                user_id = user_id or "00000000-0000-0000-0000-000000000000"
+                
+                await conn.execute(
+                    """
+                    INSERT INTO projects (id, name, description, user_id, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    """,
+                    project_id,
+                    name,
+                    description,
+                    user_id,
+                    datetime.now(timezone.utc),
+                    datetime.now(timezone.utc)
                 )
                 
-                if not task_exists:
-                    logger.warning(f"Task {task_id} not found for deletion")
+                logger.info(f"Created project {project_id}: {name}")
+                return project_id
+                
+        except Exception as e:
+            logger.error(f"Failed to create project: {e}")
+            return None
+    
+    async def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """Get project details by ID."""
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM projects WHERE id = $1",
+                    project_id
+                )
+                
+                if row:
+                    return dict(row)
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to get project {project_id}: {e}")
+            return None
+    
+    async def list_projects(self, user_id: str = None) -> List[Dict[str, Any]]:
+        """List all projects, optionally filtered by user."""
+        try:
+            async with self.pool.acquire() as conn:
+                if user_id:
+                    rows = await conn.fetch(
+                        "SELECT * FROM projects WHERE user_id = $1 ORDER BY created_at DESC",
+                        user_id
+                    )
+                else:
+                    rows = await conn.fetch(
+                        "SELECT * FROM projects ORDER BY created_at DESC"
+                    )
+                
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            logger.error(f"Failed to list projects: {e}")
+            return []
+    
+    async def update_project(self, project_id: str, name: str = None, description: str = None) -> bool:
+        """Update project details."""
+        try:
+            async with self.pool.acquire() as conn:
+                updates = []
+                values = []
+                param_count = 0
+                
+                if name is not None:
+                    param_count += 1
+                    updates.append(f"name = ${param_count}")
+                    values.append(name)
+                
+                if description is not None:
+                    param_count += 1
+                    updates.append(f"description = ${param_count}")
+                    values.append(description)
+                
+                if not updates:
+                    return True
+                
+                param_count += 1
+                updates.append(f"updated_at = ${param_count}")
+                values.append(datetime.now(timezone.utc))
+                
+                param_count += 1
+                values.append(project_id)
+                
+                query = f"UPDATE projects SET {', '.join(updates)} WHERE id = ${param_count}"
+                
+                result = await conn.execute(query, *values)
+                return result.split()[-1] == "1"
+                
+        except Exception as e:
+            logger.error(f"Failed to update project {project_id}: {e}")
+            return False
+    
+    async def delete_project(self, project_id: str) -> bool:
+        """Delete a project and all associated data."""
+        try:
+            async with self.pool.acquire() as conn:
+                # Check if project exists
+                project = await conn.fetchrow(
+                    "SELECT id FROM projects WHERE id = $1",
+                    project_id
+                )
+                
+                if not project:
+                    logger.warning(f"Project {project_id} not found")
                     return False
                 
-                logger.info(f"Starting deep delete for research task {task_id}")
-                
-                # Step 1: Get all operation IDs for this task (needed for evidence cleanup)
-                operation_ids = await conn.fetch(
-                    "SELECT operation_id FROM task_operations WHERE task_id = $1",
-                    task_id
+                # Delete project (cascade will handle related data)
+                result = await conn.execute(
+                    "DELETE FROM projects WHERE id = $1",
+                    project_id
                 )
-                operation_id_list = [row['operation_id'] for row in operation_ids]
                 
-                # Step 2: Delete operation evidence (must be first due to foreign keys)
-                if operation_id_list:
-                    evidence_count = await conn.execute(
-                        "DELETE FROM operation_evidence WHERE operation_id = ANY($1)",
-                        operation_id_list
+                logger.info(f"Deleted project {project_id}")
+                return result.split()[-1] == "1"
+                
+        except Exception as e:
+            logger.error(f"Failed to delete project {project_id}: {e}")
+            return False
+    
+    async def list_project_tasks(self, project_id: str) -> List[Dict[str, Any]]:
+        """List all research tasks in a project."""
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT * FROM research_tasks WHERE project_id = $1 ORDER BY created_at DESC",
+                    project_id
+                )
+                
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            logger.error(f"Failed to list tasks for project {project_id}: {e}")
+            return []
+    
+    # Project Knowledge Graph Methods
+    
+    async def get_project_knowledge_graph(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """Get the knowledge graph for a project."""
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM project_knowledge_graphs WHERE project_id = $1",
+                    project_id
+                )
+                
+                if row:
+                    result = dict(row)
+                    # Parse JSON if stored as string
+                    if isinstance(result.get('knowledge_data'), str):
+                        result['knowledge_data'] = json.loads(result['knowledge_data'])
+                    return result
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to get knowledge graph for project {project_id}: {e}")
+            return None
+    
+    async def update_project_knowledge_graph(self, project_id: str, knowledge_data: Dict[str, Any]) -> bool:
+        """Update or create the knowledge graph for a project."""
+        try:
+            async with self.pool.acquire() as conn:
+                # Check if knowledge graph exists
+                existing = await conn.fetchrow(
+                    "SELECT id FROM project_knowledge_graphs WHERE project_id = $1",
+                    project_id
+                )
+                
+                if existing:
+                    # Update existing
+                    await conn.execute(
+                        """
+                        UPDATE project_knowledge_graphs 
+                        SET knowledge_data = $1, updated_at = $2
+                        WHERE project_id = $3
+                        """,
+                        json.dumps(knowledge_data),
+                        datetime.now(timezone.utc),
+                        project_id
                     )
-                    logger.info(f"Deleted {evidence_count.split()[-1]} evidence records")
+                else:
+                    # Create new
+                    graph_id = str(uuid.uuid4())
+                    await conn.execute(
+                        """
+                        INSERT INTO project_knowledge_graphs 
+                        (id, project_id, knowledge_data, created_at, updated_at)
+                        VALUES ($1, $2, $3, $4, $5)
+                        """,
+                        graph_id,
+                        project_id,
+                        json.dumps(knowledge_data),
+                        datetime.now(timezone.utc),
+                        datetime.now(timezone.utc)
+                    )
                 
-                # Step 3: Delete task operations
-                operations_count = await conn.execute(
-                    "DELETE FROM task_operations WHERE task_id = $1",
-                    task_id
-                )
-                logger.info(f"Deleted {operations_count.split()[-1]} operations")
-                
-                # Step 4: Delete artifacts
-                artifacts_count = await conn.execute(
-                    "DELETE FROM artifacts WHERE task_id = $1",
-                    task_id
-                )
-                logger.info(f"Deleted {artifacts_count.split()[-1]} artifacts")
-                
-                # Step 5: Delete research reports
-                reports_count = await conn.execute(
-                    "DELETE FROM research_reports WHERE task_id = $1",
-                    task_id
-                )
-                logger.info(f"Deleted {reports_count.split()[-1]} research reports")
-                
-                # Step 6: Finally delete the main task record
-                task_count = await conn.execute(
-                    "DELETE FROM research_tasks WHERE task_id = $1",
-                    task_id
-                )
-                logger.info(f"Deleted {task_count.split()[-1]} task record")
-                
-                logger.info(f"Successfully completed deep delete for research task {task_id}")
+                logger.info(f"Updated knowledge graph for project {project_id}")
                 return True
+                
+        except Exception as e:
+            logger.error(f"Failed to update knowledge graph for project {project_id}: {e}")
+            return False
