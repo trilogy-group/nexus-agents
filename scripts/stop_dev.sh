@@ -11,6 +11,11 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}Stopping Nexus Agents Development Environment...${NC}"
 
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
 # Always stop all services including Redis by default
 
 # Stop processes from PID file
@@ -28,9 +33,9 @@ if [ -f .dev_pids ]; then
         kill $WORKER_PID 2>/dev/null || echo "Worker already stopped"
     fi
     
-    if [ ! -z "$WEB_PID" ]; then
-        echo "Stopping Web UI (PID: $WEB_PID)..."
-        kill $WEB_PID 2>/dev/null || echo "Web UI already stopped"
+    if [ ! -z "$NEXTJS_PID" ]; then
+        echo "Stopping Next.js Frontend (PID: $NEXTJS_PID)..."
+        kill $NEXTJS_PID 2>/dev/null || echo "Next.js Frontend already stopped"
     fi
     
     rm .dev_pids
@@ -43,31 +48,36 @@ else
         lsof -ti:12000 | xargs kill -9 2>/dev/null || true
     fi
     
-    if lsof -i:12001 >/dev/null 2>&1; then
-        echo "Killing process on port 12001..."
-        lsof -ti:12001 | xargs kill -9 2>/dev/null || true
+    if lsof -i:3000 >/dev/null 2>&1; then
+        echo "Killing process on port 3000..."
+        lsof -ti:3000 | xargs kill -9 2>/dev/null || true
     fi
 fi
 
-# Stop Redis automatically
+# Stop Redis container
 echo "Stopping Redis..."
-if docker ps | grep "nexus-agents-redis-1" >/dev/null 2>&1; then
-    echo "Stopping Redis Docker container..."
-    docker compose stop redis >/dev/null 2>&1 || true
-elif pgrep redis-server >/dev/null 2>&1; then
-    echo "Stopping local Redis server..."
-    redis-cli shutdown >/dev/null 2>&1
+if command_exists docker && docker info >/dev/null 2>&1; then
+    if docker compose ps redis 2>/dev/null | grep -q "running"; then
+        echo "Stopping Redis Docker container..."
+        docker compose stop redis >/dev/null 2>&1 || true
+    else
+        echo "Redis container not running"
+    fi
 else
-    echo "No Redis instance found"
+    echo "Docker not available"
 fi
 
-# Stop PostgreSQL automatically
+# Stop PostgreSQL container
 echo "Stopping PostgreSQL..."
-if docker ps | grep "nexus-agents-postgres-1" >/dev/null 2>&1; then
-    echo "Stopping PostgreSQL Docker container..."
-    docker compose stop postgres >/dev/null 2>&1 || true
+if command_exists docker && docker info >/dev/null 2>&1; then
+    if docker compose ps postgres 2>/dev/null | grep -q "running"; then
+        echo "Stopping PostgreSQL Docker container..."
+        docker compose stop postgres >/dev/null 2>&1 || true
+    else
+        echo "PostgreSQL container not running"
+    fi
 else
-    echo "No PostgreSQL container found"
+    echo "Docker not available"
 fi
 
 echo -e "\n${GREEN} All services stopped!${NC}"

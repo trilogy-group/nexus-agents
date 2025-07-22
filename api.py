@@ -99,7 +99,31 @@ class ResearchTaskQuery(BaseModel):
     research_query: str  # The actual inquiry/question to research
     user_id: Optional[str] = None
     research_type: ResearchType = ResearchType.ANALYTICAL_REPORT
-    aggregation_config: Optional[DataAggregationConfig] = None
+    data_aggregation_config: Optional[DataAggregationConfig] = None
+    project_id: Optional[str] = None  # Project this task belongs to
+
+
+class ProjectCreate(BaseModel):
+    """Model for creating a project."""
+    name: str
+    description: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class ProjectUpdate(BaseModel):
+    """Model for updating a project."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class Project(BaseModel):
+    """Model for a project."""
+    id: str
+    name: str
+    description: Optional[str] = None
+    user_id: str
+    created_at: datetime
+    updated_at: datetime
 
 
 class ResearchTaskStatus(BaseModel):
@@ -248,8 +272,9 @@ async def create_research_task(task: ResearchTaskQuery):
                     title=task.title,  # Pass the title separately
                     research_query=task.research_query,
                     user_id=task.user_id,
+                    project_id=task.project_id,  # Pass the project_id to ensure correct project assignment
                     research_type=task.research_type.value,
-                    aggregation_config=task.aggregation_config.dict() if task.aggregation_config else None
+                    aggregation_config=task.data_aggregation_config.dict() if task.data_aggregation_config else None
                 )
             
             # Start the analytical report workflow
@@ -535,6 +560,148 @@ async def get_research_report(task_id: str):
         if not report:
             raise HTTPException(status_code=404, detail="Report not found")
         return Response(content=report, media_type="text/plain")
+
+
+# Project Management Endpoints
+
+@app.post("/projects")
+async def create_project(project: ProjectCreate):
+    """Create a new project."""
+    async with get_kb() as kb:
+        # Use provided user_id or default
+        user_id = project.user_id or "00000000-0000-0000-0000-000000000000"
+        
+        # Create the project
+        project_id = await kb.create_project(
+            name=project.name,
+            description=project.description,
+            user_id=user_id
+        )
+        
+        if not project_id:
+            raise HTTPException(status_code=500, detail="Failed to create project")
+        
+        # Return the created project
+        created_project = await kb.get_project(project_id)
+        return created_project
+
+
+@app.get("/projects")
+async def list_projects(user_id: Optional[str] = None):
+    """List all projects, optionally filtered by user."""
+    async with get_kb() as kb:
+        projects = await kb.list_projects(user_id=user_id)
+        return projects
+
+
+@app.get("/projects/{project_id}")
+async def get_project(project_id: str):
+    """Get project details by ID."""
+    async with get_kb() as kb:
+        project = await kb.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return project
+
+
+@app.put("/projects/{project_id}")
+async def update_project(project_id: str, project: ProjectUpdate):
+    """Update project details."""
+    async with get_kb() as kb:
+        # Check if project exists
+        existing = await kb.get_project(project_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Update the project
+        success = await kb.update_project(
+            project_id=project_id,
+            name=project.name,
+            description=project.description
+        )
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update project")
+        
+        # Return the updated project
+        updated_project = await kb.get_project(project_id)
+        return updated_project
+
+
+@app.delete("/projects/{project_id}")
+async def delete_project(project_id: str):
+    """Delete a project and all associated data."""
+    async with get_kb() as kb:
+        success = await kb.delete_project(project_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Project not found or deletion failed")
+        return {"message": f"Project {project_id} deleted successfully"}
+
+
+@app.get("/projects/{project_id}/tasks")
+async def list_project_tasks(project_id: str):
+    """List all research tasks in a project."""
+    async with get_kb() as kb:
+        # Check if project exists
+        project = await kb.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Get tasks for the project
+        tasks = await kb.list_project_tasks(project_id)
+        return tasks
+
+
+@app.post("/projects/{project_id}/tasks")
+async def create_project_task(project_id: str, task: ResearchTaskQuery):
+    """Create a new research task within a project."""
+    # Set the project_id on the task
+    task.project_id = project_id
+    
+    # Use the existing create_research_task endpoint logic
+    return await create_research_task(task)
+
+
+@app.get("/projects/{project_id}/knowledge")
+async def get_project_knowledge_graph(project_id: str):
+    """Get the knowledge graph for a project."""
+    async with get_kb() as kb:
+        # Check if project exists
+        project = await kb.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Get knowledge graph
+        knowledge_graph = await kb.get_project_knowledge_graph(project_id)
+        if not knowledge_graph:
+            # Return empty knowledge graph structure
+            return {
+                "project_id": project_id,
+                "knowledge_data": {
+                    "nodes": [],
+                    "edges": [],
+                    "metadata": {}
+                }
+            }
+        
+        return knowledge_graph
+
+
+@app.put("/projects/{project_id}/knowledge")
+async def update_project_knowledge_graph(project_id: str, knowledge_data: Dict[str, Any]):
+    """Update the knowledge graph for a project."""
+    async with get_kb() as kb:
+        # Check if project exists
+        project = await kb.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Update knowledge graph
+        success = await kb.update_project_knowledge_graph(project_id, knowledge_data)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update knowledge graph")
+        
+        return {"message": f"Knowledge graph updated for project {project_id}"}
 
 
 def main():

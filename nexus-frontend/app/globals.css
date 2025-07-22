@@ -1,0 +1,668 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Dark mode styles */
+[data-theme="dark"] {
+  --background: #0f172a;
+  --foreground: #f1f5f9;
+}
+
+[data-theme="light"] {
+  --background: #ffffff;
+  --foreground: #0f172a;
+}
+
+/* Dark mode component overrides */
+.dark {
+  background-color: #0f172a;
+  color: #f1f5f9;
+}
+
+/* Background overrides */
+.dark .bg-white {
+  background-color: #1e293b !important;
+}
+
+.dark .bg-gray-50 {
+  background-color: #1e293b !important;
+}
+
+.dark .bg-gray-100 {
+  background-color: #374151 !important;
+}
+
+.dark .bg-gray-200 {
+  background-color: #4b5563 !important;
+}
+
+/* Text color overrides */
+.dark .text-gray-900 {
+  color: #f1f5f9 !important;
+}
+
+.dark .text-gray-800 {
+  color: #f1f5f9 !important;
+}
+
+.dark .text-gray-700 {
+  color: #cbd5e1 !important;
+}
+
+.dark .text-gray-600 {
+  color: #94a3b8 !important;
+}
+
+.dark .text-gray-500 {
+  color: #94a3b8 !important;
+}
+
+.dark .text-gray-400 {
+  color: #64748b !important;
+}
+
+/* Border overrides */
+.dark .border-gray-200 {
+  border-color: #374151 !important;
+}
+
+.dark .border-gray-300 {
+  border-color: #4b5563 !important;
+}
+
+.dark .border-gray-400 {
+  border-color: #6b7280 !important;
+}
+
+/* Hover state overrides */
+.dark .hover\:bg-gray-100:hover {
+  background-color: #374151 !important;
+}
+
+.dark .hover\:bg-gray-50:hover {
+  background-color: #374151 !important;
+}
+
+.dark .hover\:bg-white:hover {
+  background-color: #374151 !important;
+}
+
+/* Card and container overrides */
+.dark .bg-gradient-to-br {
+  background: linear-gradient(to bottom right, #1e293b, #0f172a) !important;
+}
+
+/* Input and form overrides */
+.dark input {
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+  color: #f1f5f9 !important;
+}
+
+.dark input:focus {
+  border-color: #3b82f6 !important;
+  background-color: #374151 !important;
+}
+
+.dark input::placeholder {
+  color: #9ca3af !important;
+}
+
+/* Button overrides - exclude tab navigation buttons */
+.dark button:not(.bg-blue-600):not(.bg-red-600):not(.bg-green-600):not(nav button) {
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+  color: #f1f5f9 !important;
+}
+
+.dark button:not(.bg-blue-600):not(.bg-red-600):not(.bg-green-600):not(nav button):hover {
+  background-color: #4b5563 !important;
+}
+
+/* Tab navigation buttons should have no background */
+.dark nav button {
+  background-color: transparent !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-top: none !important;
+  /* Only keep bottom border for active state */
+}
+
+/* Main content area dark mode */
+.dark main {
+  background-color: #0f172a !important;
+  color: #f1f5f9 !important;
+}
+
+/* Card components dark mode */
+.dark .rounded-lg,
+.dark .rounded-xl,
+.dark .rounded {
+  background-color: #1e293b !important;
+  border-color: #374151 !important;
+}
+
+/* Metric cards and stat cards */
+.dark .p-4,
+.dark .p-6,
+.dark .p-8 {
+  background-color: #1e293b !important;
+}
+
+/* Timeline and task detail cards */
+.dark .shadow,
+.dark .shadow-sm,
+.dark .shadow-md,
+.dark .shadow-lg {
+  background-color: #1e293b !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* Code blocks and pre elements */
+.dark pre,
+.dark code {
+  background-color: #111827 !important;
+  color: #e5e7eb !important;
+  border-color: #374151 !important;
+}
+
+/* Tab navigation */
+.dark .border-b {
+  border-color: #374151 !important;
+}
+
+/* Tab buttons - only active tabs should have blue border */
+.dark nav button.border-blue-500 {
+  border-bottom-color: #3b82f6 !important;
+}
+
+/* Ensure inactive tabs stay transparent */
+.dark nav button.border-transparent {
+  border-bottom-color: transparent !important;
+}
+
+/* DOK section cards */
+.dark .space-y-4 > div,
+.dark .space-y-6 > div {
+  background-color: #1e293b !important;
+}
+
+/* Ensure all divs with backgrounds are dark */
+.dark div[class*="bg-"] {
+  background-color: #1e293b !important;
+}
+
+/* Override any remaining white backgrounds */
+.dark * {
+  border-color: #374151;
+}
+
+.dark *:not(.bg-blue-600):not(.bg-red-600):not(.bg-green-600):not(.bg-yellow-500):not(.bg-purple-600) {
+  background-color: inherit;
+}
+
+/* Specific overrides for metric cards */
+.dark .bg-blue-50 {
+  background-color: #1e3a8a !important;
+}
+
+.dark .bg-green-50 {
+  background-color: #14532d !important;
+}
+
+.dark .bg-red-50 {
+  background-color: #7f1d1d !important;
+}
+
+.dark .bg-yellow-50 {
+  background-color: #78350f !important;
+}
+
+.dark .bg-purple-50 {
+  background-color: #581c87 !important;
+}
+
+/* Link styling for dark mode */
+.dark a {
+  color: #60a5fa !important; /* Light blue for better contrast */
+}
+
+.dark a:hover {
+  color: #93c5fd !important; /* Lighter blue on hover */
+}
+
+/* Badge and tag styling for dark mode */
+.dark .badge,
+.dark .tag,
+.dark [class*="badge"],
+.dark [class*="tag"] {
+  background-color: #374151 !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #4b5563 !important;
+}
+
+/* Specific colored badges */
+.dark .badge-primary,
+.dark .bg-blue-100 {
+  background-color: #1e40af !important;
+  color: #dbeafe !important;
+}
+
+.dark .badge-secondary,
+.dark .bg-gray-100 {
+  background-color: #374151 !important;
+  color: #f1f5f9 !important;
+}
+
+.dark .badge-success,
+.dark .bg-green-100 {
+  background-color: #166534 !important;
+  color: #dcfce7 !important;
+}
+
+.dark .badge-warning,
+.dark .bg-yellow-100 {
+  background-color: #a16207 !important;
+  color: #fef3c7 !important;
+}
+
+.dark .badge-danger,
+.dark .bg-red-100 {
+  background-color: #991b1b !important;
+  color: #fecaca !important;
+}
+
+.dark .badge-info,
+.dark .bg-cyan-100 {
+  background-color: #0e7490 !important;
+  color: #cffafe !important;
+}
+
+/* Small badges and pills */
+.dark .px-2,
+.dark .px-3 {
+  background-color: #374151 !important;
+  color: #f1f5f9 !important;
+}
+
+/* Link badges specifically */
+.dark .inline-flex.items-center {
+  background-color: #374151 !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #4b5563 !important;
+}
+
+/* Override text colors in badges */
+.dark .text-blue-800 {
+  color: #dbeafe !important;
+}
+
+.dark .text-green-800 {
+  color: #dcfce7 !important;
+}
+
+.dark .text-red-800 {
+  color: #fecaca !important;
+}
+
+.dark .text-yellow-800 {
+  color: #fef3c7 !important;
+}
+
+.dark .text-purple-800 {
+  color: #e9d5ff !important;
+}
+
+.dark .text-cyan-800 {
+  color: #cffafe !important;
+}
+
+/* Status indicators with vibrant colors for dark mode */
+.dark .text-green-600,
+.dark .text-green-700 {
+  color: #22c55e !important; /* Bright green for completed status */
+}
+
+.dark .text-yellow-600,
+.dark .text-yellow-700 {
+  color: #eab308 !important; /* Bright yellow for processing status */
+}
+
+.dark .text-red-600,
+.dark .text-red-700 {
+  color: #ef4444 !important; /* Bright red for failed status */
+}
+
+.dark .text-blue-600,
+.dark .text-blue-700 {
+  color: #3b82f6 !important; /* Bright blue for info status */
+}
+
+.dark .text-purple-600,
+.dark .text-purple-700 {
+  color: #a855f7 !important; /* Bright purple for special status */
+}
+
+/* DOK badges with vibrant backgrounds */
+.dark .bg-slate-800,
+.dark .bg-slate-700 {
+  background-color: #1e293b !important;
+  border: 1px solid #3b82f6 !important; /* Blue border for DOK badges */
+}
+
+.dark .bg-slate-600 {
+  background-color: #475569 !important;
+  color: #f1f5f9 !important;
+}
+
+/* Insight badges supporting SPOV with vibrant colors */
+.dark .bg-emerald-100,
+.dark .bg-emerald-50 {
+  background-color: #065f46 !important; /* Dark emerald background */
+  color: #6ee7b7 !important; /* Light emerald text */
+  border: 1px solid #10b981 !important;
+}
+
+.dark .text-emerald-800,
+.dark .text-emerald-700 {
+  color: #6ee7b7 !important;
+}
+
+/* Status badges with enhanced colors */
+.dark .bg-green-200,
+.dark .bg-green-300 {
+  background-color: #166534 !important;
+  color: #bbf7d0 !important;
+  border: 1px solid #22c55e !important;
+}
+
+.dark .bg-yellow-200,
+.dark .bg-yellow-300 {
+  background-color: #a16207 !important;
+  color: #fef08a !important;
+  border: 1px solid #eab308 !important;
+}
+
+.dark .bg-red-200,
+.dark .bg-red-300 {
+  background-color: #991b1b !important;
+  color: #fca5a5 !important;
+  border: 1px solid #ef4444 !important;
+}
+
+.dark .bg-blue-200,
+.dark .bg-blue-300 {
+  background-color: #1e40af !important;
+  color: #93c5fd !important;
+  border: 1px solid #3b82f6 !important;
+}
+
+.dark .bg-purple-200,
+.dark .bg-purple-300 {
+  background-color: #7c3aed !important;
+  color: #c4b5fd !important;
+  border: 1px solid #a855f7 !important;
+}
+
+/* Enhanced metric cards with color accents */
+.dark .border-l-4 {
+  border-left-color: #3b82f6 !important; /* Blue accent */
+}
+
+.dark .border-l-green-500 {
+  border-left-color: #22c55e !important;
+}
+
+.dark .border-l-red-500 {
+  border-left-color: #ef4444 !important;
+}
+
+.dark .border-l-yellow-500 {
+  border-left-color: #eab308 !important;
+}
+
+.dark .border-l-purple-500 {
+  border-left-color: #a855f7 !important;
+}
+
+/* Progress indicators and completion badges */
+.dark .bg-gradient-to-r {
+  background: linear-gradient(to right, #1e40af, #3b82f6) !important;
+}
+
+/* Special highlighting for important elements */
+.dark .ring-2 {
+  ring-color: #3b82f6 !important;
+}
+
+.dark .ring-green-500 {
+  ring-color: #22c55e !important;
+}
+
+.dark .ring-red-500 {
+  ring-color: #ef4444 !important;
+}
+
+/* Timeline status colors */
+.dark .w-3.h-3.rounded-full {
+  background-color: #22c55e !important; /* Green for completed timeline items */
+}
+
+/* Icon colors for better visibility */
+.dark .text-gray-400 svg,
+.dark .text-gray-500 svg {
+  color: #94a3b8 !important;
+}
+
+/* Button hover effects - ensure they work despite other CSS overrides */
+button.bg-blue-600:hover {
+  background-color: #1e40af !important; /* blue-800 */
+  transition: background-color 0.2s ease;
+}
+
+/* Dark mode button hover - very specific selector to override all other rules */
+.dark button.bg-blue-600:hover,
+.dark .bg-blue-600:hover,
+html.dark button.bg-blue-600:hover,
+html[data-theme="dark"] button.bg-blue-600:hover,
+body.dark button.bg-blue-600:hover {
+  background-color: #1d4ed8 !important; /* blue-700 - more visible in dark mode */
+  transition: background-color 0.2s ease !important;
+}
+
+.dark .text-green-500 svg {
+  color: #22c55e !important;
+}
+
+.dark .text-blue-500 svg {
+  color: #3b82f6 !important;
+}
+
+.dark .text-red-500 svg {
+  color: #ef4444 !important;
+}
+
+/* AGGRESSIVE DARK MODE OVERRIDES - HIGH SPECIFICITY */
+html.dark body,
+html.dark #__next,
+html.dark [data-theme="dark"] {
+  background-color: #0f172a !important;
+  color: #f1f5f9 !important;
+}
+
+/* Force status colors with maximum specificity */
+html.dark .text-green-600,
+html.dark .text-green-700,
+html.dark span.text-green-600,
+html.dark span.text-green-700,
+html.dark div.text-green-600,
+html.dark div.text-green-700 {
+  color: #22c55e !important;
+  font-weight: 600 !important;
+}
+
+/* Force completed status to be bright green */
+html.dark *[class*="completed"],
+html.dark *[class*="success"],
+html.dark .bg-green-100,
+html.dark .bg-green-200 {
+  background-color: #166534 !important;
+  color: #bbf7d0 !important;
+  border: 1px solid #22c55e !important;
+  padding: 2px 8px !important;
+  border-radius: 4px !important;
+}
+
+/* Force DOK badges to have blue accents */
+html.dark *[class*="DOK"],
+html.dark *[class*="dok"],
+html.dark .bg-slate-700,
+html.dark .bg-slate-800 {
+  background-color: #1e293b !important;
+  color: #93c5fd !important;
+  border: 2px solid #3b82f6 !important;
+  padding: 4px 12px !important;
+  border-radius: 6px !important;
+}
+
+/* Force insight badges to be emerald */
+html.dark *[class*="insight"],
+html.dark *[class*="spov"],
+html.dark .bg-emerald-100 {
+  background-color: #065f46 !important;
+  color: #6ee7b7 !important;
+  border: 2px solid #10b981 !important;
+  padding: 4px 12px !important;
+  border-radius: 6px !important;
+}
+
+/* Force all small badges to have backgrounds */
+html.dark .inline-flex.items-center.px-2,
+html.dark .inline-flex.items-center.px-3,
+html.dark span.px-2,
+html.dark span.px-3 {
+  background-color: #374151 !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #6b7280 !important;
+  border-radius: 4px !important;
+}
+
+/* Force timeline dots to be green */
+html.dark .w-3.h-3.rounded-full,
+html.dark .w-2.h-2.rounded-full {
+  background-color: #22c55e !important;
+  border: 2px solid #16a34a !important;
+}
+
+/* Force metric cards to have colored borders */
+html.dark .border-l-4 {
+  border-left: 4px solid #3b82f6 !important;
+}
+
+/* TARGETED FIXES FOR SPECIFIC CLASSES - EXACT MATCHES */
+
+/* Fix completed status in sidebar and task details */
+.dark .bg-green-100.text-green-700,
+.dark .bg-green-100.text-green-800 {
+  background-color: #166534 !important;
+  color: #bbf7d0 !important;
+  border: 1px solid #22c55e !important;
+  font-weight: 600 !important;
+}
+
+/* Fix completed status text colors */
+.dark .text-green-600,
+.dark .text-green-700,
+.dark .text-green-800 {
+  color: #22c55e !important;
+  font-weight: 600 !important;
+}
+
+/* Fix DOK badge colors from home page */
+.dark .text-blue-600 {
+  color: #60a5fa !important;
+}
+
+.dark .text-green-600 {
+  color: #22c55e !important;
+}
+
+.dark .text-purple-600 {
+  color: #a855f7 !important;
+}
+
+/* Fix tab navigation in TaskDetails */
+.dark .border-gray-200 {
+  border-color: #374151 !important;
+}
+
+.dark .text-gray-500 {
+  color: #9ca3af !important;
+}
+
+.dark .text-gray-700 {
+  color: #d1d5db !important;
+}
+
+.dark .hover\:text-gray-700:hover {
+  color: #f3f4f6 !important;
+}
+
+.dark .hover\:border-gray-300:hover {
+  border-color: #6b7280 !important;
+}
+
+/* Active tab styling */
+.dark .border-blue-500 {
+  border-color: #3b82f6 !important;
+}
+
+.dark .text-blue-600 {
+  color: #60a5fa !important;
+}
+
+/* Clean tab styling - let Tailwind dark mode variants handle the styling */
+
+/* Add cache-busting comment to force reload */
+/* Cache buster: v1.0.2 */
+
+/* Targeted fix for dropdown menu contrast only */
+.dropdown-menu-item {
+  color: rgb(17 24 39) !important; /* Ensure dropdown text is readable */
+}
+
+.dropdown-menu-item svg {
+  color: rgb(55 65 81) !important; /* Ensure dropdown icons are readable */
+}
+
+/* Dark mode dropdown fixes */
+.dark .dropdown-menu-item {
+  color: rgb(241 245 249) !important; /* Light text in dark mode */
+}
+
+.dark .dropdown-menu-item svg {
+  color: rgb(203 213 225) !important; /* Light icons in dark mode */
+}
