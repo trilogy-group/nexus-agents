@@ -212,7 +212,7 @@ class ResearchOrchestrator:
         """Decompose topic into subtopics using LLM directly."""
         # Use LLM directly for topic decomposition
         prompt = f"""
-        Decompose the following research query into 3-5 focused subtopics:
+        Decompose the following research query into 4-8 focused subtopics:
         
         Query: {query}
         
@@ -220,6 +220,9 @@ class ResearchOrchestrator:
         1. A specific research question
         2. The focus area or domain
         3. Why this subtopic is important
+        
+        Generate a varied number of subtopics (4-8) based on the complexity and breadth of the research query.
+        More complex topics should have more subtopics, while focused topics may need fewer.
         
         Format your response as a JSON array with objects containing:
         - query: the specific research question
@@ -900,7 +903,7 @@ class ResearchOrchestrator:
                 result_data={
                     "knowledge_tree_nodes": len(result.knowledge_tree) if result.knowledge_tree else 0,
                     "insights_count": len(result.insights) if result.insights else 0,
-                    "spiky_povs_count": len(result.spiky_povs) if result.spiky_povs else 0,
+                    "spiky_povs_count": (len(result.spiky_povs.get("truth", [])) + len(result.spiky_povs.get("myth", []))) if result.spiky_povs else 0,
                     "bibliography_sources": len(result.bibliography.get('sources', [])) if result.bibliography else 0,
                     "sources_processed": len(sources)
                 }
