@@ -3,7 +3,7 @@
 import asyncio
 import json
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import uuid
 from enum import Enum
@@ -212,7 +212,7 @@ class ResearchOrchestrator:
         """Decompose topic into subtopics using LLM directly."""
         # Use LLM directly for topic decomposition
         prompt = f"""
-        Decompose the following research query into 3-5 focused subtopics:
+        Decompose the following research query into 4-8 focused subtopics:
         
         Query: {query}
         
@@ -220,6 +220,9 @@ class ResearchOrchestrator:
         1. A specific research question
         2. The focus area or domain
         3. Why this subtopic is important
+        
+        Generate a varied number of subtopics (4-8) based on the complexity and breadth of the research query.
+        More complex topics should have more subtopics, while focused topics may need fewer.
         
         Format your response as a JSON array with objects containing:
         - query: the specific research question
@@ -439,43 +442,122 @@ class ResearchOrchestrator:
                         # Summarize the content
                         summary_text = await self._summarize_source(content, subtopic.query)
                         
+                        # Check for duplicate sources by URL before processing
+                        source_url = result.get('url', '')
+                        if source_url:
+                            # Check if this URL already exists for this task
+                            exists = await self.dok_workflow.dok_repository.check_source_exists_for_task(task_id, source_url)
+                            if exists:
+                                logger.info(f"Skipping duplicate source for task {task_id}: {source_url}")
+                                continue
+                        
                         # Create unique source ID
                         source_id = f"{task_id}_{i}_{j}_{uuid.uuid4().hex[:8]}"
                         
-                        # Create SourceSummary object
-                        summary = SourceSummary(
-                            id=str(uuid.uuid4()),
-                            task_id=task_id,
-                            source_id=source_id,
-                            subtopic=subtopic.query,
-                            summary=summary_text,
-                            metadata={
-                                "provider": result.get('provider', 'unknown'),
-                                "subtopic_id": i,
-                                "focus_area": subtopic.focus_area,
-                                "title": result.get('title', 'Untitled'),
-                                "url": result.get('url', ''),
-                                "relevance_score": result.get('relevance_score', 0.8)
-                            }
-                        )
-                        all_summaries.append(summary)
-                        
-                        # Store source in database
-                        await self.db.create_source(
-                            source_id=source_id,
-                            url=result.get('url', ''),
-                            title=result.get('title', 'Untitled'),
-                            description=content[:500],  # Use first 500 chars as description
-                            provider=result.get('provider', 'unknown'),
-                            metadata={
-                                "task_id": task_id,
-                                "subtopic": subtopic.query,
-                                "content": content,
-                                "summary": summary_text,
-                                "search_metadata": result.get('metadata', {})
-                            }
-                        )
-                        subtopic_summaries += 1
+                        try:
+                            # Truncate title to prevent database VARCHAR limit errors
+                            raw_title = result.get('title', 'Untitled')
+                            truncated_title = raw_title[:254] if len(raw_title) > 254 else raw_title
+                            
+                            # 1. Create source first (to satisfy foreign key constraints)
+                            await self.db.create_source(
+                                source_id=source_id,
+                                url=source_url,
+                                title=truncated_title,
+                                description=content[:500],  # Use first 500 chars as description
+                                provider=result.get('provider', 'unknown'),
+                                metadata={
+                                    "task_id": task_id,
+                                    "subtopic": subtopic.query,
+                                    "content": content,
+                                    "summary": summary_text,
+                                    "search_metadata": result.get('metadata', {})
+                                }
+                            )
+                            logger.info(f"Created source {source_id}: {result.get('title', 'Untitled')}")
+                            
+                            # 2. Find the correct subtask_id by subtopic index (more reliable than text matching)
+                            # Get all subtasks for this task ordered consistently
+                            subtasks_query = """
+                                SELECT subtask_id, topic 
+                                FROM research_subtasks 
+                                WHERE task_id = $1 
+                                ORDER BY topic
+                            """
+                            
+                            # Use the correct PostgresKnowledgeBase connection pool pattern
+                            async with self.db.pool.acquire() as conn:
+                                subtasks_result = await conn.fetch(subtasks_query, task_id)
+                            
+                            # Map subtopic index to subtask_id (i corresponds to subtopic index in the loop)
+                            subtask_id = None
+                            if subtasks_result and i < len(subtasks_result):
+                                subtask_id = subtasks_result[i]['subtask_id']
+                                logger.info(f"Linked source to subtask {subtask_id}: {subtasks_result[i]['topic'][:100]}...")
+                            else:
+                                logger.warning(f"Could not find subtask for subtopic index {i} (total subtasks: {len(subtasks_result) if subtasks_result else 0})")
+                            
+                            # 3. Extract DOK1 facts using the DOK summarization agent
+                            dok1_facts = []
+                            if self.dok_summarization_agent:
+                                try:
+                                    # Extract DOK1 facts from the source content
+                                    source_metadata = {
+                                        'title': truncated_title,
+                                        'url': result.get('url', ''),
+                                        'provider': result.get('provider', 'unknown')
+                                    }
+                                    research_context = f"Research subtopic: {subtopic.query}"
+                                    dok1_facts = await self.dok_summarization_agent._extract_dok1_facts(
+                                        result.get('content', summary_text),
+                                        source_metadata,
+                                        research_context
+                                    )
+                                    logger.info(f"Extracted {len(dok1_facts)} DOK1 facts for source {source_id}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to extract DOK1 facts for source {source_id}: {str(e)}")
+                                    dok1_facts = []
+                            
+                            # 4. Create SourceSummary with proper subtask linkage and DOK1 facts
+                            from src.agents.research.dok_workflow_orchestrator import SourceSummary as DOKSourceSummary
+                            summary = DOKSourceSummary(
+                                summary_id=f"summary_{uuid.uuid4().hex[:8]}",
+                                source_id=source_id,
+                                subtask_id=subtask_id,  # Now correctly linked to research task
+                                dok1_facts=dok1_facts,  # Now populated with actual extracted facts
+                                summary=summary_text,
+                                summarized_by="research_orchestrator",
+                                created_at=datetime.now(timezone.utc)
+                            )
+                            
+                            # 5. Store summary with DOK1 facts immediately in source_summaries table
+                            await self.dok_workflow.dok_repository.store_source_summary(summary)
+                            logger.info(f"Stored source summary {summary.summary_id} for source {source_id} with {len(dok1_facts)} DOK1 facts (subtask: {subtask_id})")
+                            
+                            # Keep legacy SourceSummary for compatibility
+                            legacy_summary = SourceSummary(
+                                id=str(uuid.uuid4()),
+                                task_id=task_id,
+                                source_id=source_id,
+                                subtopic=subtopic.query,
+                                summary=summary_text,
+                                created_at=datetime.now(timezone.utc),
+                                metadata={
+                                    "provider": result.get('provider', 'unknown'),
+                                    "subtopic_id": i,
+                                    "focus_area": subtopic.focus_area,
+                                    "title": truncated_title,
+                                    "url": result.get('url', ''),
+                                    "relevance_score": result.get('relevance_score', 0.8)
+                                }
+                            )
+                            all_summaries.append(legacy_summary)
+                            subtopic_summaries += 1
+                            
+                        except Exception as e:
+                            logger.error(f"Failed to store summary for source {source_id}: {e}")
+                            # Continue processing other sources instead of failing entire task
+                            continue
                         
                     except Exception as e:
                         logger.error(f"Error processing search result {j} for subtopic '{subtopic.query}': {e}")
@@ -671,6 +753,7 @@ class ResearchOrchestrator:
                 source_id=source_id,
                 subtopic=subtopic.query,
                 summary=summary_text,
+                created_at=datetime.now(timezone.utc),
                 metadata={
                     "provider": source['provider'],
                     "subtopic_id": subtopic_idx,
@@ -900,7 +983,7 @@ class ResearchOrchestrator:
                 result_data={
                     "knowledge_tree_nodes": len(result.knowledge_tree) if result.knowledge_tree else 0,
                     "insights_count": len(result.insights) if result.insights else 0,
-                    "spiky_povs_count": len(result.spiky_povs) if result.spiky_povs else 0,
+                    "spiky_povs_count": (len(result.spiky_povs.get("truth", [])) + len(result.spiky_povs.get("myth", []))) if result.spiky_povs else 0,
                     "bibliography_sources": len(result.bibliography.get('sources', [])) if result.bibliography else 0,
                     "sources_processed": len(sources)
                 }

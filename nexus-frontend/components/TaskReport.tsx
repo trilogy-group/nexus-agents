@@ -66,12 +66,12 @@ export function TaskReport({ taskId, taskStatus }: TaskReportProps) {
   }
 
   return (
-    <div className="max-w-none">
+    <div className="w-full overflow-hidden min-w-0" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
       {/* Report Header */}
       <div className="mb-6 pb-4 border-b border-gray-200">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">Research Report</h2>
-          <div className="flex items-center space-x-2">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h2 className="text-lg font-semibold text-gray-900 break-all">Research Report</h2>
+          <div className="flex items-center space-x-2 flex-wrap">
             <span className="text-sm text-gray-500">
               {report ? `${report.length.toLocaleString()} characters` : ''}
             </span>
@@ -98,57 +98,53 @@ export function TaskReport({ taskId, taskStatus }: TaskReportProps) {
       </div>
 
       {/* Rendered Markdown Report */}
-      <div className="prose prose-gray max-w-none">
+      <div className="w-full max-w-none overflow-hidden break-words min-w-0" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
         <ReactMarkdown 
           remarkPlugins={[remarkGfm]}
           components={{
             // Custom styling for markdown elements
-            h1: ({ children }) => <h1 className="text-3xl font-bold text-gray-900 mb-6">{children}</h1>,
-            h2: ({ children }) => <h2 className="text-2xl font-semibold text-gray-900 mb-4 mt-8">{children}</h2>,
-            h3: ({ children }) => <h3 className="text-xl font-semibold text-gray-900 mb-3 mt-6">{children}</h3>,
-            h4: ({ children }) => <h4 className="text-lg font-semibold text-gray-900 mb-2 mt-4">{children}</h4>,
-            p: ({ children }) => <p className="text-gray-700 mb-4 leading-relaxed">{children}</p>,
-            ul: ({ children }) => <ul className="list-disc list-inside mb-4 space-y-1">{children}</ul>,
-            ol: ({ children }) => <ol className="list-decimal list-inside mb-4 space-y-1">{children}</ol>,
-            li: ({ children }) => <li className="text-gray-700">{children}</li>,
+            h1: ({ children }) => <h1 className="text-3xl font-bold text-gray-900 mb-6 break-all" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</h1>,
+            h2: ({ children }) => <h2 className="text-2xl font-semibold text-gray-900 mb-4 mt-8 break-all" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</h2>,
+            h3: ({ children }) => <h3 className="text-xl font-semibold text-gray-900 mb-3 mt-6 break-all" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</h3>,
+            h4: ({ children }) => <h4 className="text-lg font-semibold text-gray-900 mb-2 mt-4 break-all" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</h4>,
+            p: ({ children }) => <p className="text-gray-700 mb-4 leading-relaxed break-all whitespace-pre-wrap" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</p>,
+            ul: ({ children }) => <ul className="list-disc list-inside mb-4 space-y-1 break-all" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</ul>,
+            ol: ({ children }) => <ol className="list-decimal list-inside mb-4 space-y-1 break-all" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</ol>,
+            li: ({ children }) => <li className="text-gray-700 break-all" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</li>,
             blockquote: ({ children }) => (
-              <blockquote className="border-l-4 border-blue-500 pl-4 py-2 mb-4 bg-blue-50 text-gray-700 italic">
+              <blockquote className="border-l-4 border-blue-500 pl-4 py-2 mb-4 bg-blue-50 text-gray-700 italic break-all whitespace-pre-wrap" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
                 {children}
               </blockquote>
             ),
             code: ({ children, className }) => {
               const isInline = !className;
               if (isInline) {
-                return <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800">{children}</code>;
+                return <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800 break-all" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</code>;
               }
               return (
-                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto mb-4">
-                  <code className="text-sm font-mono">{children}</code>
+                <pre className="bg-gray-100 p-4 rounded-lg mb-4 overflow-hidden" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                  <code className="text-sm font-mono text-gray-800 whitespace-pre-wrap break-all" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</code>
                 </pre>
               );
             },
             table: ({ children }) => (
-              <div className="overflow-x-auto mb-4">
-                <table className="min-w-full divide-y divide-gray-200 border border-gray-200 rounded-lg">
-                  {children}
-                </table>
+              <div className="w-full overflow-x-auto mb-4 min-w-0">
+                <table className="w-full border-collapse border border-gray-300" style={{ tableLayout: 'fixed' }}>{children}</table>
               </div>
             ),
-            thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
-            tbody: ({ children }) => <tbody className="bg-white divide-y divide-gray-200">{children}</tbody>,
-            tr: ({ children }) => <tr>{children}</tr>,
             th: ({ children }) => (
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                {children}
-              </th>
+              <th className="border border-gray-300 px-4 py-2 bg-gray-100 font-semibold text-left break-all max-w-xs" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</th>
             ),
-            td: ({ children }) => <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{children}</td>,
+            td: ({ children }) => (
+              <td className="border border-gray-300 px-4 py-2 break-all max-w-xs" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{children}</td>
+            ),
             a: ({ children, href }) => (
               <a 
                 href={href} 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="text-blue-600 hover:text-blue-800 underline"
+                className="text-blue-600 hover:text-blue-800 underline break-all"
+                style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
               >
                 {children}
               </a>

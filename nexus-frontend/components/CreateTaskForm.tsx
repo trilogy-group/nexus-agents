@@ -15,6 +15,7 @@ export function CreateTaskForm({ projectId, onTaskCreated }: CreateTaskFormProps
   const [description, setDescription] = useState('');
   const [researchType, setResearchType] = useState('analytical_report');
   const queryClient = useQueryClient();
+  const { addTaskToProject, addToast } = useAppStore();
 
   const createTaskMutation = useMutation({
     mutationFn: async (taskData: {
@@ -31,6 +32,9 @@ export function CreateTaskForm({ projectId, onTaskCreated }: CreateTaskFormProps
     onSuccess: (data) => {
       console.log('Task created successfully:', data);
       
+      // Add the new task to the Zustand store immediately for instant UI update
+      addTaskToProject(projectId, data);
+      
       // Reset form
       setTitle('');
       setDescription('');
@@ -44,12 +48,22 @@ export function CreateTaskForm({ projectId, onTaskCreated }: CreateTaskFormProps
       // Call the callback
       onTaskCreated?.();
       
-      // Show success message
-      alert('Research task created successfully!');
+      // Show success toast
+      addToast({
+        type: 'success',
+        title: 'Research Task Created',
+        message: `"${data.title}" has been added to your project`,
+        duration: 4000
+      });
     },
     onError: (error) => {
       console.error('Error creating task:', error);
-      alert(`Failed to create task: ${error.message}`);
+      addToast({
+        type: 'error',
+        title: 'Failed to Create Task',
+        message: error.message || 'An unexpected error occurred',
+        duration: 6000
+      });
     }
   });
 
@@ -57,7 +71,12 @@ export function CreateTaskForm({ projectId, onTaskCreated }: CreateTaskFormProps
     e.preventDefault();
     
     if (!title.trim() || !description.trim()) {
-      alert('Please fill in all required fields');
+      addToast({
+        type: 'warning',
+        title: 'Missing Information',
+        message: 'Please fill in both title and description fields',
+        duration: 4000
+      });
       return;
     }
 

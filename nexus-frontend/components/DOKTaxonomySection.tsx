@@ -2,10 +2,12 @@
 
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Book, Lightbulb, Target, FileText } from 'lucide-react';
+import { ChevronDown, ChevronRight, Book, Lightbulb, Target, FileText, Download } from 'lucide-react';
+import { BrainLiftExportModal } from './BrainLiftExportModal';
 
 interface DOKTaxonomySectionProps {
   taskId: string;
+  taskTitle?: string;
 }
 
 interface DOKTaxonomyData {
@@ -29,8 +31,9 @@ interface DOKTaxonomyData {
   };
 }
 
-export function DOKTaxonomySection({ taskId }: DOKTaxonomySectionProps) {
+export function DOKTaxonomySection({ taskId, taskTitle }: DOKTaxonomySectionProps) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['knowledge_tree']));
+  const [showBrainLiftModal, setShowBrainLiftModal] = useState(false);
 
   // Fetch DOK taxonomy data
   const { data: dokData, isLoading: dokLoading, error: dokError } = useQuery({
@@ -154,10 +157,22 @@ export function DOKTaxonomySection({ taskId }: DOKTaxonomySectionProps) {
   return (
     <div className="space-y-6">
       <div className="border-b border-gray-200 pb-4">
-        <h2 className="text-lg font-semibold text-gray-900">DOK Taxonomy Analysis</h2>
-        <p className="text-sm text-gray-600 mt-1">
-          Depth of Knowledge taxonomy and structured analysis of research findings
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">DOK Taxonomy Analysis</h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Depth of Knowledge taxonomy and structured analysis of research findings
+            </p>
+          </div>
+          <button
+            onClick={() => setShowBrainLiftModal(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            title="Export to BrainLift format"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export to BrainLift</span>
+          </button>
+        </div>
       </div>
 
       {sections.map(({ id, title, icon: Icon, data, description }) => (
@@ -375,6 +390,14 @@ export function DOKTaxonomySection({ taskId }: DOKTaxonomySectionProps) {
           )}
         </div>
       ))}
+      
+      {/* BrainLift Export Modal */}
+      <BrainLiftExportModal
+        isOpen={showBrainLiftModal}
+        onClose={() => setShowBrainLiftModal(false)}
+        dokData={dokData}
+        taskTitle={taskTitle || `Research Task ${taskId}`}
+      />
     </div>
   );
 }

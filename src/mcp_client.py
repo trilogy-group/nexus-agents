@@ -1255,7 +1255,51 @@ class MCPSearchClient:
         elif "n" in input_schema:
             args["n"] = max_results
         
+        # Handle Linkup-specific depth parameter
+        if "depth" in input_schema:
+            args["depth"] = "standard"  # Linkup requires 'standard' or 'deep'
+        
+        # Handle Perplexity-specific messages parameter
+        if "messages" in input_schema:
+            args["messages"] = [
+                {"role": "user", "content": query}
+            ]
+        
+        # Handle Exa-specific companyName parameter
+        if "companyName" in input_schema:
+            # Extract company name from query - use the query as company name for now
+            # This is a simple heuristic; could be improved with NLP
+            company_name = self._extract_company_name_from_query(query)
+            if company_name:
+                args["companyName"] = company_name
+            else:
+                # Fallback: use the query itself as company name
+                args["companyName"] = query.strip()
+        
         return args
+    
+    def _extract_company_name_from_query(self, query: str) -> Optional[str]:
+        """Extract company name from search query using simple heuristics."""
+        import re
+        
+        # Simple patterns to extract company names
+        # Look for patterns like "Apple Inc", "Microsoft Corporation", etc.
+        company_patterns = [
+            r'\b([A-Z][a-zA-Z]+(?:\s+(?:Inc|Corp|Corporation|Ltd|Limited|LLC|Co|Company))?)\b',
+            r'\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\b'  # Multi-word capitalized terms
+        ]
+        
+        for pattern in company_patterns:
+            matches = re.findall(pattern, query)
+            if matches:
+                # Return the first reasonable match
+                for match in matches:
+                    if len(match) > 2 and not match.lower() in ['the', 'and', 'for', 'with', 'about']:
+                        return match
+        
+        # Fallback: return the first few words of the query
+        words = query.strip().split()[:3]
+        return ' '.join(words) if words else query.strip()
     
     def _parse_firecrawl_sources(self, text: str) -> List[Dict[str, Any]]:
         """Parse Firecrawl's multi-source text format."""

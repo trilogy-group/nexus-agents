@@ -79,7 +79,7 @@ export function TaskDetails({ taskId }: TaskDetailsProps) {
   }
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-gray-900">
+    <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-hidden min-w-0">
       {/* Header */}
       <div className="border-b border-gray-200 dark:border-gray-700 p-6">
         <div className="flex items-start justify-between">
@@ -141,10 +141,12 @@ export function TaskDetails({ taskId }: TaskDetailsProps) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-6">
-        {activeTab === 'timeline' && <TaskTimeline taskId={taskId} />}
-        {activeTab === 'report' && <TaskReport taskId={taskId} taskStatus={task.status} />}
-        {activeTab === 'knowledge' && <DOKTaxonomySection taskId={taskId} />}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 min-w-0">
+        <div className="w-full max-w-full overflow-hidden">
+          {activeTab === 'timeline' && <TaskTimeline taskId={taskId} />}
+          {activeTab === 'report' && <TaskReport taskId={taskId} taskStatus={task.status} />}
+          {activeTab === 'knowledge' && <DOKTaxonomySection taskId={taskId} taskTitle={task.title || task.research_query} />}
+        </div>
       </div>
 
       {/* Delete Confirmation Modal */}

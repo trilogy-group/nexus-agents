@@ -197,7 +197,17 @@ class NexusAgents:
             "message_id": str(uuid.uuid4())
         })
         
-        return task.id
+        # Return complete task information for frontend display
+        return {
+            "task_id": task.id,
+            "title": task.title,
+            "description": task.description,
+            "status": task.status.value,
+            "continuous_mode": task.continuous_mode,
+            "continuous_interval_hours": task.continuous_interval_hours,
+            "created_at": None,  # Will be populated after storage
+            "updated_at": None
+        }
     
     async def get_task_status(self, task_id: str) -> Dict[str, Any]:
         """

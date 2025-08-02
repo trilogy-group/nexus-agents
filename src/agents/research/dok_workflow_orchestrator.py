@@ -70,12 +70,13 @@ class DOKWorkflowOrchestrator:
         Returns:
             DOKWorkflowResult with all generated DOK taxonomy data
         """
-        logger.info(f"Starting DOK workflow for task {task_id} with {len(sources)} sources")
+        logger.info(f"Starting DOK workflow for task {task_id}")
         
         try:
-            # Phase 1: Source Summarization (DOK 1)
-            logger.info("Phase 1: Source Summarization")
-            source_summaries = await self._summarize_sources(sources, research_context, subtask_id)
+            # Phase 1: Retrieve ALL source summaries from database (DOK 1)
+            logger.info("Phase 1: Retrieving all source summaries from database")
+            source_summaries = await self._get_all_source_summaries_from_db(task_id)
+            logger.info(f"Retrieved {len(source_summaries)} source summaries from database")
             
             # Phase 2: Knowledge Tree Building (DOK 1-2)
             logger.info("Phase 2: Knowledge Tree Building")
@@ -114,18 +115,81 @@ class DOKWorkflowOrchestrator:
             logger.error(f"Error in DOK workflow for task {task_id}: {str(e)}")
             raise
     
+    async def _get_all_source_summaries_from_db(self, task_id: str) -> List[SourceSummary]:
+        """Retrieve all source summaries for a task from the database."""
+        try:
+            # Get all source summaries from the database for this task
+            db_summaries = await self.dok_repository.get_source_summaries_by_task(task_id)
+            
+            source_summaries = []
+            for db_summary in db_summaries:
+                # Log the raw database record for debugging
+                logger.debug(f"Processing DB summary: source_id={db_summary.get('source_id')}, summary_length={len(db_summary.get('summary', '') or '')}")
+                
+                # Convert database record to SourceSummary dataclass
+                summary_text = db_summary.get('summary', '')
+                if not summary_text or summary_text.strip() == '':
+                    summary_text = '[Summary not available]'
+                    logger.warning(f"Empty summary for source {db_summary.get('source_id')}")
+                
+                source_summary = SourceSummary(
+                    summary_id=db_summary.get('id', f"summary_{db_summary.get('source_id', 'unknown')}"),
+                    source_id=db_summary.get('source_id', ''),
+                    subtask_id=db_summary.get('subtask_id'),  # This links to the subtopic
+                    dok1_facts=[],  # Will be populated if needed
+                    summary=summary_text,
+                    summarized_by=db_summary.get('summarized_by', 'unknown'),
+                    created_at=db_summary.get('created_at', datetime.now(timezone.utc)),
+                    title=db_summary.get('title', 'Unknown Source'),
+                    url=db_summary.get('url', ''),
+                    provider=db_summary.get('provider', 'unknown')
+                )
+                source_summaries.append(source_summary)
+            
+            logger.info(f"Retrieved {len(source_summaries)} source summaries from database for task {task_id}")
+            return source_summaries
+            
+        except Exception as e:
+            logger.error(f"Error retrieving source summaries from database for task {task_id}: {str(e)}")
+            return []
+    
     async def _summarize_sources(
         self,
+        task_id: str,
         sources: List[Dict[str, Any]],
         research_context: str,
         subtask_id: Optional[str] = None
     ) -> List[SourceSummary]:
-        """Process sources - either use existing summaries or create new ones."""
-        
+        """Summarize sources and extract DOK1 facts."""
         source_summaries = []
         
-        # Check if sources already contain summary data from orchestrator
+        # Filter out duplicate sources (by URL) that already exist for this task
+        filtered_sources = []
+        duplicate_count = 0
+        
         for source in sources:
+            url = source.get('url', '')
+            if not url:
+                logger.warning(f"Source {source.get('source_id', 'unknown')} has no URL, skipping duplicate check")
+                filtered_sources.append(source)
+                continue
+                
+            # Check if this URL already exists for this task
+            exists = await self.dok_repository.check_source_exists_for_task(task_id, url)
+            if exists:
+                duplicate_count += 1
+                logger.info(f"Skipping duplicate source for task {task_id}: {url}")
+                continue
+            
+            filtered_sources.append(source)
+        
+        if duplicate_count > 0:
+            logger.info(f"Filtered out {duplicate_count} duplicate sources for task {task_id}")
+        
+        logger.info(f"Processing {len(filtered_sources)} unique sources (filtered from {len(sources)} total)")
+        
+        # Check if sources already contain summary data from orchestrator
+        for source in filtered_sources:
             # If source already has summary data from orchestrator, reconstruct SourceSummary
             if 'summary' in source and 'source_id' in source:
                 # Source was already summarized by orchestrator, use existing data
@@ -162,7 +226,19 @@ class DOKWorkflowOrchestrator:
                 )
                 source_summaries.append(summary)
         
-        # Store summaries in database
+        # First, ensure all sources are stored in database before storing summaries
+        for i, source in enumerate(sources):
+            # Ensure source has required fields for database storage
+            if 'source_id' not in source:
+                logger.error(f"Source {i} missing source_id, cannot store")
+                continue
+                
+            # Store source in database first
+            source_stored = await self.dok_repository.store_source(source)
+            if not source_stored:
+                logger.error(f"Failed to store source {source['source_id']}")
+        
+        # Then store summaries (now that sources exist in DB)
         for summary in source_summaries:
             await self.dok_repository.store_source_summary(summary)
         
@@ -175,47 +251,318 @@ class DOKWorkflowOrchestrator:
         source_summaries: List[SourceSummary],
         research_context: str
     ) -> List[Dict[str, Any]]:
-        """Build hierarchical knowledge tree from source summaries."""
+        """Build 2-level hierarchical knowledge tree from source summaries using Topic Decomposition as scaffolding."""
         
-        # Group summaries by topic/category
-        categorized_summaries = await self._categorize_summaries(source_summaries, research_context)
+        # Step 1: Get Topic Decomposition subtopics to use as top-level categories
+        subtopics = await self._get_topic_decomposition_subtopics(task_id)
         
-        # Create knowledge nodes for each category
+        # Step 2: Map sources to subtopics based on their subtask_id
+        subtopic_source_mapping = await self._map_sources_to_subtopics(source_summaries, subtopics)
+        
+        # Step 3: Build 2-level knowledge tree
         knowledge_nodes = []
-        for category, summaries in categorized_summaries.items():
+        
+        for subtask_id, mapping_data in subtopic_source_mapping.items():
+            subtopic = mapping_data['subtopic']
+            sources = mapping_data['sources']
             
-            # Create category summary
-            category_summary = await self._create_category_summary(category, summaries, research_context)
+            if not sources:  # Skip empty categories
+                continue
+                
+            # Create top-level category node
+            category_summary = await self._create_category_summary(subtopic['focus_area'], sources, research_context)
             
-            # Create knowledge node
-            node_id = await self.dok_repository.create_knowledge_node(
+            parent_node_id = await self.dok_repository.create_knowledge_node(
                 task_id=task_id,
-                category=category,
+                category=subtopic['focus_area'],
                 summary=category_summary,
-                dok_level=2
+                dok_level=2,
+                parent_id=None  # Top-level node
             )
             
-            if node_id:
-                # Link sources to the node
-                source_ids = [summary.source_id for summary in summaries]
+            if not parent_node_id:
+                logger.error(f"Failed to create parent node for category: {subtopic['focus_area']}")
+                continue
                 
-                # Verify sources exist before linking (transaction isolation fix)
-                existing_sources = await self._verify_sources_exist(source_ids)
-                if existing_sources:
-                    await self.dok_repository.link_sources_to_knowledge_node(node_id, existing_sources)
-                else:
-                    logger.warning(f"No sources found for knowledge node {node_id}, skipping linkage")
+            # Step 4: Create subcategories for this top-level category
+            subcategories = await self._create_subcategories_for_category(
+                subtopic['focus_area'], sources, research_context
+            )
+            
+            # Create subcategory nodes and link sources
+            subcategory_nodes = []
+            for subcategory_name, subcategory_sources in subcategories.items():
+                if not subcategory_sources:
+                    continue
+                    
+                # Create subcategory summary
+                subcategory_summary = await self._create_category_summary(
+                    subcategory_name, subcategory_sources, research_context
+                )
                 
-                knowledge_nodes.append({
-                    'node_id': node_id,
-                    'category': category,
-                    'summary': category_summary,
-                    'dok_level': 2,
-                    'source_count': len(source_ids)
+                # Create subcategory node
+                subcategory_node_id = await self.dok_repository.create_knowledge_node(
+                    task_id=task_id,
+                    category=subtopic['focus_area'],
+                    subcategory=subcategory_name,
+                    summary=subcategory_summary,
+                    dok_level=2,
+                    parent_id=parent_node_id
+                )
+                
+                if subcategory_node_id:
+                    # Link sources to the subcategory node
+                    source_ids = [summary.source_id for summary in subcategory_sources]
+                    
+                    # Verify sources exist before linking
+                    existing_sources = await self._verify_sources_exist(source_ids)
+                    if existing_sources:
+                        await self.dok_repository.link_sources_to_knowledge_node(
+                            subcategory_node_id, existing_sources
+                        )
+                    
+                    subcategory_nodes.append({
+                        'node_id': subcategory_node_id,
+                        'category': subtopic['focus_area'],
+                        'subcategory': subcategory_name,
+                        'summary': subcategory_summary,
+                        'dok_level': 2,
+                        'source_count': len(source_ids),
+                        'parent_id': parent_node_id
+                    })
+            
+            # Add parent node with its subcategories
+            knowledge_nodes.append({
+                'node_id': parent_node_id,
+                'category': subtopic['focus_area'],
+                'summary': category_summary,
+                'dok_level': 2,
+                'source_count': len(sources),
+                'subcategories': subcategory_nodes
+            })
+        
+        logger.info(f"Built 2-level knowledge tree with {len(knowledge_nodes)} top-level categories and {sum(len(node.get('subcategories', [])) for node in knowledge_nodes)} subcategories")
+        return knowledge_nodes
+    
+    async def _get_topic_decomposition_subtopics(self, task_id: str) -> List[Dict[str, str]]:
+        """Retrieve topic decomposition subtopics for the given task."""
+        try:
+            # Get subtasks from the database
+            query = """
+                SELECT subtask_id, topic, description 
+                FROM research_subtasks 
+                WHERE task_id = $1 
+                ORDER BY created_at
+            """
+            
+            rows = await self.dok_repository.fetch_all(query, task_id)
+            
+            if not rows:
+                logger.warning(f"No subtopics found for task {task_id}. This might indicate a problem with topic decomposition.")
+                # Instead of fallback, raise an error to investigate the issue
+                raise ValueError(f"No subtopics found for task {task_id}. Topic decomposition may have failed.")
+            
+            subtopics = []
+            for row in rows:
+                # Parse the topic to extract focus area (assuming format from topic decomposition)
+                subtopics.append({
+                    'subtask_id': row['subtask_id'],
+                    'query': row['topic'],
+                    'focus_area': row['description'] or row['topic'],  # Use description as focus area
+                    'importance': 'Research subtopic from topic decomposition'
+                })
+            
+            logger.info(f"Retrieved {len(subtopics)} subtopics for task {task_id}: {[s['focus_area'] for s in subtopics]}")
+            return subtopics
+            
+        except Exception as e:
+            logger.error(f"Error retrieving topic decomposition subtopics for task {task_id}: {str(e)}")
+            # Re-raise the error instead of using fallback to identify the root cause
+            raise
+    
+    async def _map_sources_to_subtopics(
+        self, 
+        source_summaries: List[SourceSummary], 
+        subtopics: List[Dict[str, str]]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Map source summaries to their corresponding subtopics based on subtask_id."""
+        
+        # Create mapping from subtask_id to subtopic
+        subtask_to_subtopic = {subtopic['subtask_id']: subtopic for subtopic in subtopics}
+        
+        # Group sources by subtopic using subtask_id as key
+        subtopic_source_mapping = {}
+        
+        unlinked_sources = []
+        
+        for source_summary in source_summaries:
+            subtask_id = source_summary.subtask_id
+            
+            # Find the corresponding subtopic
+            if subtask_id and subtask_id in subtask_to_subtopic:
+                subtopic = subtask_to_subtopic[subtask_id]
+                key = subtask_id
+                
+                # Initialize subtopic entry if not exists
+                if key not in subtopic_source_mapping:
+                    subtopic_source_mapping[key] = {
+                        'subtopic': subtopic,
+                        'sources': []
+                    }
+                
+                subtopic_source_mapping[key]['sources'].append(source_summary)
+            else:
+                # Track sources without subtask_id for investigation
+                unlinked_sources.append({
+                    'source_id': source_summary.source_id,
+                    'subtask_id': subtask_id,
+                    'title': getattr(source_summary, 'title', 'Unknown')
                 })
         
-        logger.info(f"Built knowledge tree with {len(knowledge_nodes)} nodes")
-        return knowledge_nodes
+        # Log detailed mapping information
+        total_mapped = sum(len(mapping['sources']) for mapping in subtopic_source_mapping.values())
+        logger.info(f"Source mapping results:")
+        logger.info(f"  - Total sources: {len(source_summaries)}")
+        logger.info(f"  - Mapped to subtopics: {total_mapped}")
+        logger.info(f"  - Unlinked sources: {len(unlinked_sources)}")
+        
+        if unlinked_sources:
+            logger.warning(f"Found {len(unlinked_sources)} sources without valid subtask_id:")
+            for source in unlinked_sources[:5]:  # Log first 5 for debugging
+                logger.warning(f"  - Source {source['source_id']}: subtask_id='{source['subtask_id']}', title='{source['title']}'")
+        
+        # Log subtopic distribution
+        for subtask_id, mapping in subtopic_source_mapping.items():
+            logger.info(f"  - Subtopic '{mapping['subtopic']['focus_area']}': {len(mapping['sources'])} sources")
+        
+        logger.info(f"Mapped {len(source_summaries)} sources to {len(subtopic_source_mapping)} subtopic categories")
+        return subtopic_source_mapping
+    
+    async def _create_subcategories_for_category(
+        self,
+        category_name: str,
+        sources: List[SourceSummary],
+        research_context: str
+    ) -> Dict[str, List[SourceSummary]]:
+        """Create subcategories for a given category using LLM analysis of source titles and summaries."""
+        
+        logger.info(f"Creating subcategories for '{category_name}' with {len(sources)} sources")
+        
+        # Always try to create meaningful subcategories, even for small numbers
+        if len(sources) == 0:
+            return {}
+        elif len(sources) == 1:
+            # Single source gets a descriptive subcategory based on its content
+            subcategory_name = f"{category_name} - Core Analysis"
+            return {subcategory_name: sources}
+        
+        # For larger numbers of sources, use LLM-driven subcategorization
+        # Prepare source information for LLM analysis (limit to avoid token overflow)
+        source_info = []
+        for i, source in enumerate(sources):
+            # Use more source information for better categorization
+            title = source.title or f"Source {i+1}"
+            summary = source.summary[:300] + "..." if len(source.summary) > 300 else source.summary
+            source_info.append({
+                'index': i,
+                'title': title,
+                'summary': summary
+            })
+        
+        # Create prompt for subcategorization
+        sources_text = "\n".join([
+            f"Source {info['index']}: {info['title']}\nSummary: {info['summary']}\n"
+            for info in source_info
+        ])
+        
+        prompt = f"""
+Analyze the following sources related to "{category_name}" and organize them into 3-8 meaningful subcategories.
+
+Research Context: {research_context}
+Category: {category_name}
+
+Sources:
+{sources_text}
+
+Create subcategories that:
+1. Are specific and meaningful within the "{category_name}" domain
+2. Group related sources together logically
+3. Cover all sources (each source should belong to exactly one subcategory)
+4. Have descriptive names that clearly indicate the subcategory focus
+5. Range from 3-8 subcategories based on source diversity
+
+Return a JSON object where keys are subcategory names and values are arrays of source indices (0-based):
+{{
+"Subcategory 1 Name": [0, 3, 7],
+"Subcategory 2 Name": [1, 4, 6],
+"Subcategory 3 Name": [2, 5]
+}}
+
+Subcategorization:
+"""
+        
+        try:
+            response = await self.llm_client.generate(prompt)
+            import json
+            
+            # Clean the response - remove any markdown formatting
+            cleaned_response = response.strip()
+            if cleaned_response.startswith('```json'):
+                cleaned_response = cleaned_response[7:]
+            if cleaned_response.endswith('```'):
+                cleaned_response = cleaned_response[:-3]
+            cleaned_response = cleaned_response.strip()
+            
+            subcategorization = json.loads(cleaned_response)
+            
+            # Convert indices to actual source summaries
+            subcategories = {}
+            for subcategory_name, indices in subcategorization.items():
+                subcategories[subcategory_name] = [
+                    sources[i] for i in indices 
+                    if i < len(sources)
+                ]
+            
+            # Ensure all sources are assigned
+            assigned_sources = set()
+            for subcategory_sources in subcategories.values():
+                for source in subcategory_sources:
+                    assigned_sources.add(id(source))
+            
+            # Add any unassigned sources to a meaningful fallback subcategory
+            unassigned_sources = [source for source in sources if id(source) not in assigned_sources]
+            if unassigned_sources:
+                fallback_name = f"{category_name} - Additional Sources"
+                if fallback_name in subcategories:
+                    subcategories[fallback_name].extend(unassigned_sources)
+                else:
+                    subcategories[fallback_name] = unassigned_sources
+            
+            logger.info(f"Created {len(subcategories)} subcategories for category '{category_name}': {list(subcategories.keys())}")
+            return subcategories
+            
+        except Exception as e:
+            logger.error(f"Error creating subcategories for '{category_name}': {str(e)}")
+            # Fallback: create meaningful subcategories based on source count instead of "General"
+            return self._create_fallback_subcategories(category_name, sources)
+    
+    def _create_fallback_subcategories(self, category_name: str, sources: List[SourceSummary]) -> Dict[str, List[SourceSummary]]:
+        """Create meaningful fallback subcategories when LLM subcategorization fails."""
+        if len(sources) <= 5:
+            return {f"{category_name} - Core Sources": sources}
+        
+        # Split sources into multiple meaningful subcategories
+        subcategories = {}
+        chunk_size = max(3, len(sources) // 4)  # Aim for 3-4 subcategories
+        
+        for i in range(0, len(sources), chunk_size):
+            chunk = sources[i:i + chunk_size]
+            subcategory_num = (i // chunk_size) + 1
+            subcategory_name = f"{category_name} - Analysis {subcategory_num}"
+            subcategories[subcategory_name] = chunk
+        
+        logger.info(f"Created {len(subcategories)} fallback subcategories for '{category_name}'")
+        return subcategories
     
     async def _categorize_summaries(
         self,
@@ -443,7 +790,7 @@ Research Context: {research_context}
 Insights:
 {insights_text}
 
-Generate 2-4 Spiky POVs that:
+Generate 4-8 Spiky POVs total that:
 1. Are based on the insights but go beyond them
 2. Are contrarian or surprising
 3. Others might reasonably disagree with
@@ -451,6 +798,8 @@ Generate 2-4 Spiky POVs that:
 5. Challenge conventional thinking
 
 Separate them into Truths (things you believe are true) and Myths (things you believe are false).
+Generate 2-4 truths and 2-4 myths, varying the numbers based on what the evidence supports.
+More complex topics with rich evidence may warrant more POVs, while focused topics may need fewer.
 
 Return as JSON:
 {{
