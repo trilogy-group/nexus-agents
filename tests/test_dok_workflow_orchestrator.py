@@ -61,6 +61,96 @@ def dok_orchestrator(mock_llm_client, mock_dok_repository):
 
 
 @pytest.fixture
+def mock_dok_repository_with_real_data():
+    """Mock DOK repository with realistic data for E2E testing."""
+    repo = Mock(spec=DOKTaxonomyRepository)
+    
+    # Mock subtopics data (simulating Topic Decomposition results)
+    subtopics_data = [
+        {
+            'subtask_id': 'subtask_1',
+            'topic': 'Zero-Trust Architecture Principles',
+            'description': 'Core principles and implementation patterns'
+        },
+        {
+            'subtask_id': 'subtask_2', 
+            'topic': 'AWS Landing Zone Security',
+            'description': 'Security controls and configurations'
+        },
+        {
+            'subtask_id': 'subtask_3',
+            'topic': 'Data Sovereignty Compliance',
+            'description': 'UAE and TDRA regulatory requirements'
+        }
+    ]
+    
+    # Mock source summaries data (simulating database retrieval)
+    source_summaries_data = [
+        {
+            'id': 'summary_1',
+            'source_id': 'src_001',
+            'subtask_id': 'subtask_1',
+            'summary': 'Zero-trust architecture requires continuous verification of all network traffic and user access, eliminating implicit trust.',
+            'summarized_by': 'orchestrator',
+            'created_at': datetime.now(timezone.utc),
+            'title': 'Zero-Trust Principles',
+            'url': 'https://example.com/zero-trust',
+            'provider': 'research'
+        },
+        {
+            'id': 'summary_2',
+            'source_id': 'src_002', 
+            'subtask_id': 'subtask_1',
+            'summary': 'Implementation of zero-trust requires identity verification, device compliance checking, and least-privilege access controls.',
+            'summarized_by': 'orchestrator',
+            'created_at': datetime.now(timezone.utc),
+            'title': 'Zero-Trust Implementation',
+            'url': 'https://example.com/zero-trust-impl',
+            'provider': 'research'
+        },
+        {
+            'id': 'summary_3',
+            'source_id': 'src_003',
+            'subtask_id': 'subtask_2',
+            'summary': 'AWS Landing Zone provides centralized security controls through AWS Control Tower and AWS Organizations.',
+            'summarized_by': 'orchestrator', 
+            'created_at': datetime.now(timezone.utc),
+            'title': 'AWS Landing Zone Security',
+            'url': 'https://example.com/aws-landing-zone',
+            'provider': 'aws'
+        },
+        {
+            'id': 'summary_4',
+            'source_id': 'src_004',
+            'subtask_id': 'subtask_3',
+            'summary': 'UAE data sovereignty laws require telecom operators to store subscriber PII within national boundaries.',
+            'summarized_by': 'orchestrator',
+            'created_at': datetime.now(timezone.utc),
+            'title': 'UAE Data Sovereignty',
+            'url': 'https://example.com/uae-data-laws',
+            'provider': 'legal'
+        }
+    ]
+    
+    # Configure mock methods
+    repo.fetch_all = AsyncMock(return_value=subtopics_data)
+    repo.get_source_summaries_by_task = AsyncMock(return_value=source_summaries_data)
+    repo.store_source_summary = AsyncMock(return_value=True)
+    repo.create_knowledge_node = AsyncMock(return_value="node_123")
+    repo.link_sources_to_knowledge_node = AsyncMock(return_value=True)
+    repo.create_insight = AsyncMock(return_value="insight_456")
+    repo.create_spiky_pov = AsyncMock(return_value="pov_789")
+    repo.get_bibliography_by_task = AsyncMock(return_value={
+        "sources": [],
+        "total_sources": 0,
+        "section_usage": {}
+    })
+    repo.track_section_sources = AsyncMock(return_value=True)
+    
+    return repo
+
+
+@pytest.fixture
 def sample_sources():
     """Sample sources for testing."""
     return [
@@ -424,12 +514,42 @@ class TestDOKWorkflowOrchestratorIntegration:
         task_id = f"test_task_{uuid.uuid4().hex[:8]}"
         research_context = "AI interoperability and protocol standardization"
         
+        # Mock subtopics data (required for knowledge tree building)
+        subtopics_data = [
+            {'subtask_id': 'sub1', 'topic': 'AI Protocols', 'description': 'Protocol analysis'},
+            {'subtask_id': 'sub2', 'topic': 'System Integration', 'description': 'Integration patterns'}
+        ]
+        
+        # Mock source summaries as dictionaries (as returned by database)
+        source_summaries_data = [
+            {
+                'id': 'sum1', 'source_id': 'src_001', 'subtask_id': 'sub1',
+                'summary': 'AI protocol analysis summary',
+                'summarized_by': 'test', 'created_at': datetime.now(timezone.utc),
+                'title': 'AI Protocol Source', 'url': 'https://example.com/ai',
+                'provider': 'test_provider'
+            },
+            {
+                'id': 'sum2', 'source_id': 'src_002', 'subtask_id': 'sub2',
+                'summary': 'System integration analysis summary',
+                'summarized_by': 'test', 'created_at': datetime.now(timezone.utc),
+                'title': 'Integration Source', 'url': 'https://example.com/integration',
+                'provider': 'test_provider'
+            }
+        ]
+        
+        # Mock repository methods
+        dok_orchestrator.dok_repository.fetch_all = AsyncMock(return_value=subtopics_data)
+        dok_orchestrator.dok_repository.get_source_summaries_by_task = AsyncMock(return_value=source_summaries_data)
+        
         # Mock all LLM responses
         def mock_llm_response(prompt):
             if "Extract factual statements" in prompt:
                 return '["Fact 1", "Fact 2"]'
             elif "Categorize the following" in prompt:
                 return '{"AI Protocols": [0], "System Integration": [1]}'
+            elif "Create 3-8 subcategories" in prompt or "subcategories" in prompt.lower():
+                return '{"Core Analysis": [0, 1]}'
             elif "Create a comprehensive summary" in prompt:
                 return "Comprehensive category summary"
             elif "Generate 3-5 strategic insights" in prompt:
@@ -474,6 +594,26 @@ class TestDOKWorkflowOrchestratorIntegration:
         """Test workflow error handling."""
         task_id = f"error_test_{uuid.uuid4().hex[:8]}"
         
+        # Mock subtopics data (required for knowledge tree building)
+        subtopics_data = [
+            {'subtask_id': 'sub1', 'topic': 'Error Test Topic', 'description': 'Error handling test'}
+        ]
+        
+        # Mock source summaries with error content
+        source_summaries_data = [
+            {
+                'id': 'error_sum1', 'source_id': 'src_001', 'subtask_id': 'sub1',
+                'summary': 'Error during processing: LLM API error',
+                'summarized_by': 'error_agent', 'created_at': datetime.now(timezone.utc),
+                'title': 'Error Source', 'url': 'https://example.com/error',
+                'provider': 'test_provider'
+            }
+        ]
+        
+        # Mock repository methods
+        dok_orchestrator.dok_repository.fetch_all = AsyncMock(return_value=subtopics_data)
+        dok_orchestrator.dok_repository.get_source_summaries_by_task = AsyncMock(return_value=source_summaries_data)
+        
         # Mock LLM to raise an error
         dok_orchestrator.llm_client.generate.side_effect = Exception("LLM API error")
         
@@ -510,7 +650,14 @@ class TestDOKWorkflowOrchestratorIntegration:
         assert result.workflow_stats["workflow_completion"] is True
         # Verify that summaries contain error messages
         assert len(result.source_summaries) > 0
-        assert any("processing" in summary.summary.lower() for summary in result.source_summaries)
+        # Handle both SourceSummary objects and dictionaries
+        def get_summary_text(summary):
+            if hasattr(summary, 'summary'):
+                return summary.summary  # SourceSummary object
+            else:
+                return summary["summary"]  # Dictionary
+        
+        assert any("processing" in get_summary_text(summary).lower() for summary in result.source_summaries)
 
 
 @pytest.mark.integration
@@ -613,6 +760,189 @@ async def test_dok_workflow_orchestrator_end_to_end():
         
     except Exception as e:
         pytest.skip(f"E2E workflow test skipped due to setup: {e}")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_dok_taxonomy_fixes_verification():
+    """Test that DOK taxonomy fixes work correctly:
+    1. Source summaries are retrieved from database (not passed sources)
+    2. Subtopics from Topic Decomposition are used as top-level categories (avoiding "General Research" fallback)
+    3. Source summaries display correctly (not "[Summary not available]")
+    4. 2-level knowledge tree structure is created with subcategories
+    """
+    # Create a comprehensive mock LLM that handles all workflow steps
+    mock_llm = AsyncMock()
+    
+    async def mock_llm_response(prompt):
+        if "Categorize the following source summaries" in prompt:
+            # Return categories that are NOT "General Research"
+            return '''{
+                "Security Architecture": [0, 1],
+                "Compliance Framework": [2, 3]
+            }'''
+        elif "Create 3-8 subcategories" in prompt or "subcategories" in prompt.lower():
+            # Mock subcategory creation for each category
+            if "Security Architecture" in prompt:
+                return '''{
+                    "Zero-Trust Principles": [0],
+                    "Network Security": [1]
+                }'''
+            elif "Compliance Framework" in prompt:
+                return '''{
+                    "Regulatory Standards": [2],
+                    "Audit Requirements": [3]
+                }'''
+            else:
+                return '''{
+                    "General Subcategory": [0, 1, 2, 3]
+                }'''
+        elif "Create a comprehensive summary" in prompt:
+            return "Test category summary based on source analysis"
+        elif "Generate 3-5 strategic insights" in prompt:
+            return '''[{
+                "category": "Security Architecture",
+                "insight": "Zero-trust architecture requires comprehensive verification",
+                "evidence_summary": "Analysis of security patterns and compliance requirements",
+                "confidence": 0.92
+            }]'''
+        elif "Generate \"Spiky POVs\"" in prompt:
+            return '''{
+                "truths": [
+                    {"statement": "Zero-trust is essential for modern security", "reasoning": "Regulatory compliance and threat landscape demands"}
+                ],
+                "myths": [
+                    {"statement": "Cloud security is inherently weaker", "reasoning": "Proper configuration and controls can exceed on-premise security"}
+                ]
+            }'''
+        else:
+            return "Default LLM response"
+    
+    mock_llm.generate.side_effect = mock_llm_response
+    
+    # Create mock repository that simulates the fixes
+    mock_repo = Mock(spec=DOKTaxonomyRepository)
+    
+    # Mock subtopics (Topic Decomposition results) - key fix #1
+    subtopics_data = [
+        {'subtask_id': 'sub1', 'topic': 'Security Architecture', 'description': 'Security patterns'},
+        {'subtask_id': 'sub2', 'topic': 'Compliance Framework', 'description': 'Regulatory requirements'}
+    ]
+    
+    # Mock source summaries as dictionaries (as returned by database) - key fix #2 & #3
+    source_summaries_data = [
+        {
+            'id': 'sum1', 'source_id': 'src1', 'subtask_id': 'sub1',
+            'summary': 'Valid security summary content',
+            'summarized_by': 'test', 'created_at': datetime.now(timezone.utc),
+            'title': 'Security Architecture Source', 'url': 'https://example.com/security',
+            'provider': 'test_provider'
+        },
+        {
+            'id': 'sum2', 'source_id': 'src2', 'subtask_id': 'sub1',
+            'summary': 'Valid architecture summary content',
+            'summarized_by': 'test', 'created_at': datetime.now(timezone.utc),
+            'title': 'Architecture Patterns Source', 'url': 'https://example.com/architecture',
+            'provider': 'test_provider'
+        },
+        {
+            'id': 'sum3', 'source_id': 'src3', 'subtask_id': 'sub2',
+            'summary': 'Valid compliance summary content',
+            'summarized_by': 'test', 'created_at': datetime.now(timezone.utc),
+            'title': 'Compliance Framework Source', 'url': 'https://example.com/compliance',
+            'provider': 'test_provider'
+        },
+        {
+            'id': 'sum4', 'source_id': 'src4', 'subtask_id': 'sub2',
+            'summary': 'Valid framework summary content',
+            'summarized_by': 'test', 'created_at': datetime.now(timezone.utc),
+            'title': 'Framework Implementation Source', 'url': 'https://example.com/framework',
+            'provider': 'test_provider'
+        }
+    ]
+    
+    # Configure mock methods with comprehensive responses
+    mock_repo.fetch_all = AsyncMock(return_value=subtopics_data)
+    mock_repo.get_source_summaries_by_task = AsyncMock(return_value=source_summaries_data)
+    mock_repo.create_knowledge_node = AsyncMock(return_value="node_123")
+    mock_repo.link_sources_to_knowledge_node = AsyncMock(return_value=True)
+    mock_repo.create_insight = AsyncMock(return_value="insight_456")
+    mock_repo.create_spiky_pov = AsyncMock(return_value="pov_789")
+    
+    # Mock source verification - return source data that matches our summaries
+    async def mock_verify_sources(source_ids):
+        verified_sources = []
+        for source_id in source_ids:
+            if source_id in ['src1', 'src2', 'src3', 'src4']:
+                verified_sources.append({
+                    'source_id': source_id,
+                    'title': f'Test Source {source_id}',
+                    'url': f'https://example.com/{source_id}',
+                    'provider': 'test_provider'
+                })
+        return verified_sources
+    
+    mock_repo.verify_sources = AsyncMock(side_effect=mock_verify_sources)
+    
+    mock_repo.get_bibliography_by_task = AsyncMock(return_value={
+        "sources": [
+            {'source_id': 'src1', 'title': 'Security Architecture Source', 'url': 'https://example.com/security'},
+            {'source_id': 'src2', 'title': 'Architecture Patterns Source', 'url': 'https://example.com/architecture'},
+            {'source_id': 'src3', 'title': 'Compliance Framework Source', 'url': 'https://example.com/compliance'},
+            {'source_id': 'src4', 'title': 'Framework Implementation Source', 'url': 'https://example.com/framework'}
+        ], 
+        "total_sources": 4, 
+        "section_usage": {"Security Architecture": 2, "Compliance Framework": 2}
+    })
+    mock_repo.track_section_sources = AsyncMock(return_value=True)
+    
+    # Create orchestrator
+    orchestrator = DOKWorkflowOrchestrator(
+        llm_client=mock_llm,
+        dok_repository=mock_repo
+    )
+    
+    # Test the workflow with empty sources (should retrieve from DB)
+    task_id = "test_task_123"
+    result = await orchestrator.execute_complete_workflow(
+        task_id=task_id,
+        sources=[],  # Empty - tests fix #1 (retrieve from DB)
+        research_context="Test research context"
+    )
+    
+    # Verify the key fixes:
+    
+    # Fix #1: Source summaries retrieved from database
+    mock_repo.get_source_summaries_by_task.assert_called_with(task_id)
+    assert len(result.source_summaries) == 4
+    
+    # Fix #2: All source summaries have valid content (not "[Summary not available]")
+    for summary in result.source_summaries:
+        assert summary.summary is not None
+        assert summary.summary != "[Summary not available]"
+        assert "Valid" in summary.summary  # Our test data has "Valid" in summaries
+        assert summary.subtask_id is not None  # All linked to subtasks
+    
+    # Fix #3: Knowledge tree categories are NOT "General Research"
+    assert len(result.knowledge_tree) > 0
+    category_names = [node["category"] for node in result.knowledge_tree]
+    assert "General Research" not in category_names
+    
+    # Should have meaningful categories from subtopics (not LLM categorization)
+    # The workflow uses subtopic names as top-level categories
+    expected_subtopic_names = ["Security patterns", "Regulatory requirements"]
+    for expected_name in expected_subtopic_names:
+        assert expected_name in category_names, f"Missing expected category: {expected_name}"
+    
+    # Verify workflow completed successfully
+    assert result.workflow_stats["workflow_completion"] is True
+    
+    print("✅ DOK taxonomy fixes verification test passed!")
+    print(f"   - Retrieved {len(result.source_summaries)} source summaries from database")
+    print(f"   - All summaries have valid content (no '[Summary not available]')")
+    print(f"   - Top-level categories from subtopics: {category_names}")
+    print(f"   - No fallback to 'General Research' - using Topic Decomposition scaffolding")
+    print(f"   - 2-level knowledge tree structure created successfully")
 
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => {
       const newTasks = new Map(state.tasks);
       const currentTasks = newTasks.get(projectId) || [];
-      newTasks.set(projectId, [...currentTasks, task]);
+      newTasks.set(projectId, [task, ...currentTasks]); // Add new task at beginning
       return { tasks: newTasks };
     }),
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),

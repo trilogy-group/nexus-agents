@@ -21,6 +21,35 @@ logger = logging.getLogger(__name__)
 class DOKTaxonomyRepository(BaseRepository):
     """Repository for DOK taxonomy and bibliography management operations."""
     
+    async def store_source(self, source: Dict[str, Any]) -> bool:
+        """Store a source in the database."""
+        query = """
+            INSERT INTO sources (
+                source_id, url, title, description, source_type, provider,
+                accessed_at, metadata, content_hash, reliability_score
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (source_id) DO NOTHING
+        """
+        
+        try:
+            await self.execute_query(
+                query,
+                source.get('source_id'),
+                source.get('url'),
+                source.get('title'),
+                source.get('description'),
+                source.get('source_type', 'web'),
+                source.get('provider', 'unknown'),
+                source.get('accessed_at', datetime.now(timezone.utc)),
+                json.dumps(source.get('metadata', {})),
+                source.get('content_hash'),
+                source.get('reliability_score', 0.5)
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error storing source {source.get('source_id')}: {str(e)}")
+            return False
+    
     async def store_source_summary(self, summary: SourceSummary) -> bool:
         """Store a source summary in the database."""
         query = """
@@ -49,6 +78,23 @@ class DOKTaxonomyRepository(BaseRepository):
             return True
         except Exception as e:
             logger.error(f"Error storing source summary {summary.summary_id}: {str(e)}")
+            return False
+    
+    async def check_source_exists_for_task(self, task_id: str, url: str) -> bool:
+        """Check if a source with the given URL already exists for the specified task."""
+        query = """
+            SELECT COUNT(*) as count
+            FROM source_summaries ss
+            JOIN sources s ON ss.source_id = s.source_id
+            JOIN research_subtasks rs ON ss.subtask_id = rs.subtask_id
+            WHERE rs.task_id = $1 AND s.url = $2
+        """
+        
+        try:
+            result = await self.fetch_one(query, task_id, url)
+            return result['count'] > 0 if result else False
+        except Exception as e:
+            logger.error(f"Error checking source existence for task {task_id}, URL {url}: {str(e)}")
             return False
     
     async def get_source_summaries_by_task(self, task_id: str) -> List[Dict[str, Any]]:

@@ -285,11 +285,19 @@ async def create_research_task(task: ResearchTaskQuery):
                 )
             )
             
+            # Get the complete task object to return to frontend
+            async with get_kb() as kb:
+                task_data = await kb.get_research_task(task_id)
+            
             return {
                 "task_id": task_id,
+                "title": task.title,
                 "research_query": task.research_query,
                 "research_type": task.research_type.value,
                 "status": "pending",
+                "user_id": task.user_id,
+                "project_id": task.project_id,
+                "created_at": task_data.get('created_at', ''),
                 "message": "Analytical report task started successfully"
             }
         except Exception as e:

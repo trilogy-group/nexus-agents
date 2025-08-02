@@ -44,6 +44,14 @@ export function BrainLiftExportModal({ isOpen, onClose, dokData, taskTitle }: Br
     const myths = safeArray(spikyPovs.myth);
     const bibliography = normalizeBibliography(dokData.bibliography);
     const sourceSummaries = safeArray(dokData.source_summaries);
+    
+    // Create a lookup map for source summaries by source_id
+    const summaryLookup = new Map();
+    sourceSummaries.forEach((summary: any) => {
+      if (summary.source_id) {
+        summaryLookup.set(summary.source_id, summary);
+      }
+    });
 
     let content = `- ${title}\n`;
     
@@ -87,7 +95,21 @@ export function BrainLiftExportModal({ isOpen, onClose, dokData, taskTitle }: Br
     content += `    - Truths\n`;
     if (truths.length > 0) {
       truths.forEach((truth: any, index: number) => {
-        content += `      - Spiky POV Truth ${index + 1}: ${truth.statement || truth.content || truth}\n`;
+        const statement = truth.statement || truth.content || truth;
+        const reasoning = truth.reasoning || '';
+        const supportingInsights = safeArray(truth.supporting_insights || []);
+        
+        content += `      - Spiky POV Truth ${index + 1}: ${statement}\n`;
+        if (reasoning) {
+          content += `        - Reasoning: ${reasoning}\n`;
+        }
+        if (supportingInsights.length > 0) {
+          content += `        - Supporting Insights:\n`;
+          supportingInsights.forEach((insight: any) => {
+            const insightName = insight.category;
+            content += `          - ${insightName}\n`;
+          });
+        }
       });
     } else {
       content += `      - Spiky POV Truth 1: [To be developed based on research findings]\n`;
@@ -95,7 +117,21 @@ export function BrainLiftExportModal({ isOpen, onClose, dokData, taskTitle }: Br
     content += `    - Myths\n`;
     if (myths.length > 0) {
       myths.forEach((myth: any, index: number) => {
-        content += `      - Spiky POV Myth ${index + 1}: ${myth.statement || myth.content || myth}\n`;
+        const statement = myth.statement || myth.content || myth;
+        const reasoning = myth.reasoning || '';
+        const supportingInsights = safeArray(myth.supporting_insights || []);
+        
+        content += `      - Spiky POV Myth ${index + 1}: ${statement}\n`;
+        if (reasoning) {
+          content += `        - Reasoning: ${reasoning}\n`;
+        }
+        if (supportingInsights.length > 0) {
+          content += `        - Supporting Insights:\n`;
+          supportingInsights.forEach((insight: any) => {
+            const insightName = insight.category;
+            content += `          - ${insightName}\n`;
+          });
+        }
       });
     } else {
       content += `      - Spiky POV Myth 1: [To be developed based on research findings]\n`;
@@ -164,21 +200,34 @@ export function BrainLiftExportModal({ isOpen, onClose, dokData, taskTitle }: Br
         }, {});
 
         Object.entries(subcategories).forEach(([subcategoryName, subItems]: [string, any]) => {
-          content += `      - ${subcategoryName}\n`;
-          content += `        - Sources:\n`;
+          // Check if this subcategory has any sources before displaying it
+          const hasAnySources = subItems.some((subItem: any) => subItem.sources && subItem.sources.length > 0);
           
-          // Get sources from subcategory items
-          subItems.forEach((subItem: any) => {
-            if (subItem.sources && subItem.sources.length > 0) {
-              subItem.sources.slice(0, 3).forEach((source: any) => { // Limit to 3 sources per subcategory
+          if (hasAnySources) {
+            content += `      - ${subcategoryName}\n`;
+            content += `        - Sources:\n`;
+            
+            // Get sources from subcategory items
+            subItems.forEach((subItem: any) => {
+              if (subItem.sources && subItem.sources.length > 0) {
+              subItem.sources.forEach((source: any) => { // Show all sources in subcategory
                 const sourceName = source.title || source.name || 'Research Source';
                 content += `          - ${sourceName}\n`;
-                content += `            - DOK1 Facts: ${source.facts || source.summary || 'Key factual information from source'}\n`;
-                content += `            - Summary: ${source.summary || source.description || source.content || '[Summary not available]'}\n`;
+                
+                // Look up the actual source summary using source_id
+                const sourceId = source.source_id || source.id;
+                const sourceSummary = summaryLookup.get(sourceId);
+                
+                const dok1Facts = sourceSummary?.dok1_facts || source.facts || 'Key factual information from source';
+                const summaryText = sourceSummary?.summary || source.summary || source.description || source.content || '[Summary not available]';
+                
+                content += `            - DOK1 Facts: ${Array.isArray(dok1Facts) ? dok1Facts.join('; ') : dok1Facts}\n`;
+                content += `            - Summary: ${summaryText}\n`;
                 content += `            - Link: ${source.url || source.link || 'Source link'}\n`;
               });
             }
           });
+          }
         });
       });
     } else {
