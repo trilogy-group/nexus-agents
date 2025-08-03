@@ -58,9 +58,16 @@ class TestResearchOrchestrator:
             rate_limiter=rate_limiter
         )
         
+        from src.database.dok_taxonomy_repository import DOKTaxonomyRepository
+        dok_repository = DOKTaxonomyRepository(knowledge_base)
         dok_workflow = DOKWorkflowOrchestrator(
-            llm_client=llm_client
+            llm_client=llm_client,
+            dok_repository=dok_repository
         )
+        
+        # Ensure DOK workflow orchestrator uses the same database connection
+        dok_workflow.dok_repository.knowledge_base = knowledge_base
+        dok_workflow.dok_repository._pool = knowledge_base.pool
         
         # Load LLM config
         import json

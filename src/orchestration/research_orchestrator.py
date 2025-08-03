@@ -23,6 +23,7 @@ from ..agents.summarization.summarization_agent import SummarizationAgent
 from ..agents.research.dok_workflow_orchestrator import DOKWorkflowOrchestrator
 from ..persistence.postgres_knowledge_base import PostgresKnowledgeBase
 from ..domain_processors.registry import get_global_registry
+from ..orchestration.data_aggregation_orchestrator import DataAggregationOrchestrator
 from ..config.search_providers import SearchProvidersConfig
 from ..mcp_client import MCPClient, MCPSearchClient
 from ..mcp_tool_selector import MCPToolSelector
@@ -77,6 +78,31 @@ class ResearchOrchestrator:
         self.mcp_search_client = None
         self.mcp_tool_selector = None
         self._init_mcp_search_client()
+        
+        # Initialize data aggregation orchestrator
+        # Check if task coordinator already has a data aggregation repository assigned by worker
+        if self.task_coordinator and self.task_coordinator.data_aggregation_repository is not None:
+            # Use the repository assigned by the worker
+            self.data_aggregation_repository = self.task_coordinator.data_aggregation_repository
+            logger.info("Using data aggregation repository assigned by worker")
+        else:
+            # Create our own repository if none exists
+            from src.database.data_aggregation_repository import DataAggregationRepository
+            self.data_aggregation_repository = DataAggregationRepository(self.db)
+            # Assign it to the task coordinator
+            if self.task_coordinator:
+                self.task_coordinator.data_aggregation_repository = self.data_aggregation_repository
+                logger.info("Research orchestrator assigned data aggregation repository to task coordinator")
+        
+        self.data_aggregation_orchestrator = DataAggregationOrchestrator(
+            llm_client=self.dok_workflow.llm_client,
+            data_aggregation_repository=self.data_aggregation_repository,
+            task_coordinator=self.task_coordinator
+        )
+        
+        # Ensure the data_aggregation_repository has access to the knowledge base
+        if hasattr(self.data_aggregation_repository, 'knowledge_base') and self.data_aggregation_repository.knowledge_base is None:
+            self.data_aggregation_repository.knowledge_base = self.db
     
     def _init_mcp_search_client(self):
         """Initialize MCP search client with available providers."""
@@ -402,8 +428,8 @@ class ResearchOrchestrator:
         
         for i, subtopic in enumerate(subtopics):
             try:
-                # Execute search using MCP client
-                search_results = await self._execute_mcp_search(subtopic.query, subtopic.focus_area)
+                # Execute search using MCP client with higher result limit
+                search_results = await self._execute_mcp_search(subtopic.query, subtopic.focus_area, max_results=100)
                 
                 # Track successful search agent operation
                 await self.db.create_task_operation(
@@ -621,7 +647,7 @@ class ResearchOrchestrator:
         
         return all_summaries
     
-    async def _execute_mcp_search(self, query: str, focus_area: str) -> List[Dict[str, Any]]:
+    async def _execute_mcp_search(self, query: str, focus_area: str, max_results: int = 50) -> List[Dict[str, Any]]:
         """Execute search using MCP search client with robust error handling."""
         # Combine query with focus area for more targeted search
         enhanced_query = f"{query} {focus_area}"
@@ -714,8 +740,8 @@ class ResearchOrchestrator:
                     error_msg += f" Parsing errors: {'; '.join(parsing_errors)}"
                 raise ValueError(error_msg)
             
-            # Limit to top 50 results per query for comprehensive research
-            final_results = filtered_results[:50]
+            # Limit to max_results parameter
+            final_results = filtered_results[:max_results]
             logger.info(f"MCP search successful: {len(final_results)} usable results from {len(results)} total for query '{enhanced_query}'")
             
             return final_results
@@ -1094,6 +1120,28 @@ class ResearchOrchestrator:
         ]
         
         return "\n".join(report_sections)
+    
+    async def execute_data_aggregation(self, task_id: str, config: Dict[str, Any]):
+        """Execute data aggregation workflow."""
+        logger.info(f"Starting data aggregation workflow for task {task_id}")
+        
+        try:
+            # Update task status
+            await self.db.update_research_task_status(task_id, "processing")
+            
+            # Execute data aggregation using the dedicated orchestrator
+            result = await self.data_aggregation_orchestrator.execute_data_aggregation(task_id, config)
+            
+            # Update task status to completed
+            await self.db.update_research_task_status(task_id, "completed")
+            
+            logger.info(f"Completed data aggregation workflow for task {task_id}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to execute data aggregation workflow: {e}", exc_info=True)
+            await self.db.update_research_task_status(task_id, "failed", str(e))
+            raise
     
     async def _generate_comprehensive_analysis(self,
                                              query: str,

@@ -197,32 +197,100 @@ class MCPClient:
             async def search_operation(session):
                 # Try to call search tool
                 try:
-                    # Different servers have different tool names
-                    tool_names = ['search', 'firecrawl_search', 'exa_search', 'perplexity_search', 'linkup_search']
+                    # Different servers have different tool names - try them in order of preference
+                    tool_names = [
+                        'search', 'web_search', 'search_web', 'query', 'find', 'lookup', 'discover',
+                        # Provider-specific tool names
+                        'firecrawl_search', 'exa_search', 'perplexity_search', 'linkup_search',
+                        'perplexity_ask', 'ask', 'research', 'answer'
+                    ]
                     
                     for tool_name in tool_names:
                         try:
-                            result = await session.call_tool(
-                                tool_name,
-                                arguments={
-                                    "query": query,
-                                    "limit": max_results
-                                }
-                            )
+                            # Prepare arguments based on common patterns
+                            arguments = {
+                                "query": query,
+                                "limit": max_results,
+                                "max_results": max_results,
+                                "num_results": max_results
+                            }
+                            
+                            # Add provider-specific arguments
+                            if server_name == "linkup":
+                                arguments["depth"] = "standard"
+                            elif server_name == "perplexity":
+                                arguments["messages"] = [{"role": "user", "content": query}]
+                            
+                            result = await session.call_tool(tool_name, arguments)
                             return result
                         except Exception as e:
                             continue  # Try next tool name
                     
-                    # If no standard tools work, list available tools
-                    tools = await session.list_tools()
-                    available_tools = [tool.name for tool in tools.tools] if tools and tools.tools else []
+                    # If no standard tools work, list available tools and try the first one
+                    try:
+                        tools_response = await session.list_tools()
+                        available_tools = tools_response.get("tools", []) if tools_response else []
+                        if available_tools:
+                            first_tool = available_tools[0]
+                            tool_name = first_tool.get("name")
+                            if tool_name:
+                                # Try with minimal arguments
+                                arguments = {"query": query}
+                                result = await session.call_tool(tool_name, arguments)
+                                return result
+                    except Exception:
+                        pass
                     
+                    available_tools = [tool.get("name") for tool in available_tools] if available_tools else []
                     raise Exception(f"No search tools found. Available tools: {available_tools}")
                     
                 except Exception as e:
                     raise Exception(f"Search operation failed: {e}")
             
             result = await self.connect_and_call(server_name, server_script, env_vars, search_operation)
+            
+            # Standardize the result format for data aggregation
+            if result and isinstance(result, dict):
+                # If it's already in the expected format, return as-is
+                if "results" in result:
+                    return result
+                
+                # If it has content, try to extract results from content
+                if "content" in result:
+                    content = result["content"]
+                    if isinstance(content, list):
+                        # Try to parse content items that contain JSON text
+                        parsed_results = []
+                        for item in content:
+                            if isinstance(item, dict) and "text" in item:
+                                try:
+                                    # Parse JSON if the text contains JSON
+                                    text_content = item["text"]
+                                    if isinstance(text_content, str) and (text_content.strip().startswith("{") or text_content.strip().startswith("[")):
+                                        parsed = json.loads(text_content)
+                                        if isinstance(parsed, dict) and "results" in parsed:
+                                            parsed_results.extend(parsed["results"])
+                                        elif isinstance(parsed, list):
+                                            parsed_results.extend(parsed)
+                                        else:
+                                            parsed_results.append(parsed)
+                                    else:
+                                        # Use the item as-is if it's not JSON
+                                        parsed_results.append(item)
+                                except json.JSONDecodeError:
+                                    # If parsing fails, use the item as-is
+                                    parsed_results.append(item)
+                            else:
+                                # Use non-text items as-is
+                                parsed_results.append(item)
+                        
+                        return {"results": parsed_results, "providers_used": [server_name]}
+            
+            # If result is a list, wrap it in the expected format
+            elif isinstance(result, list):
+                return {"results": result, "providers_used": [server_name]}
+            
+            # Return the result as-is for other cases
             return result
             
         except Exception as e:
@@ -1092,8 +1160,12 @@ class MCPSearchClient:
         available_tools = {}
         enabled_servers = self.config_loader.get_enabled_servers()
         
+        print(f"🔍 Getting available tools from {len(enabled_servers)} enabled servers")
+        
         for server_name, server_config in enabled_servers.items():
             try:
+                print(f"🔍 Checking tools for server: {server_name}")
+                
                 # Get actual environment variables
                 config_env = server_config.get("env", {})
                 actual_env = {}
@@ -1101,6 +1173,8 @@ class MCPSearchClient:
                     env_value = os.getenv(env_var_name)
                     if env_value:
                         actual_env[env_var_name] = env_value
+                    else:
+                        print(f"⚠️  Environment variable {env_var_name} not found for {server_name}")
                 
                 # List tools from this server
                 tools = await self.list_tools(
@@ -1109,14 +1183,19 @@ class MCPSearchClient:
                     actual_env
                 )
                 
+                print(f"🔧 Server {server_name} tools: {[tool.get('name') for tool in tools]}")
+                
                 if tools:
                     available_tools[server_name] = tools
                     print(f"✅ Found {len(tools)} tools from {server_name}")
+                else:
+                    print(f"⚠️  No tools found from {server_name}")
                     
             except Exception as e:
                 print(f"⚠️  Failed to list tools from {server_name}: {e}")
                 continue
         
+        print(f"🎯 Total available tools from {len(available_tools)} servers")
         return available_tools
 
     async def search_web(self, query: str, max_results: int = 50) -> List[Dict[str, Any]]:
@@ -1162,6 +1241,7 @@ class MCPSearchClient:
             ]
             
             if not search_tools:
+                print(f"⚠️  No search tools found for {server_name}")
                 continue
                 
             # Use the first available search tool from this server
@@ -1183,6 +1263,8 @@ class MCPSearchClient:
                     # Prepare tool arguments based on tool schema
                     tool_args = self._prepare_search_args(tool, query, max_results)
                     
+                    print(f"🔍 Calling search tool {tool_name} on {server_name} with args: {tool_args}")
+                    
                     # Call the tool
                     result = await self.call_tool(
                         server_name,
@@ -1191,6 +1273,8 @@ class MCPSearchClient:
                         tool_args,
                         actual_env
                     )
+                    
+                    print(f"📥 Raw search result from {server_name}.{tool_name}: {result}")
                     
                     # Process and standardize results
                     processed_results = self._process_search_results(
@@ -1201,6 +1285,8 @@ class MCPSearchClient:
                         all_results.extend(processed_results)
                         providers_used.append(server_name)
                         print(f"✅ Got {len(processed_results)} results from {server_name}")
+                    else:
+                        print(f"⚠️  No processed results from {server_name}.{tool_name}")
                         
                     # Continue to next tool instead of breaking early
                         
@@ -1212,6 +1298,8 @@ class MCPSearchClient:
         
         # Trim to max_results and add provider count metadata
         final_results = all_results[:max_results]
+        
+        print(f"📊 Final search results count: {len(final_results)} from providers: {providers_used}")
         
         # Add metadata about providers used
         for result in final_results:

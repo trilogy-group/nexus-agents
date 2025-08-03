@@ -232,7 +232,7 @@ class TestDOKWorkflowOrchestrator:
         
         # Test summarization
         result = await dok_orchestrator._summarize_sources(
-            sample_sources, "AI interoperability research", "subtask_test"
+            "test_task", sample_sources, "AI interoperability research", "subtask_test"
         )
         
         assert len(result) == 2

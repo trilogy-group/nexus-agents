@@ -10,10 +10,24 @@ interface CreateTaskFormProps {
   onTaskCreated?: () => void;
 }
 
+interface DataAggregationConfig {
+  entities: string[];
+  attributes: string[];
+  search_space: string;
+  domain_hint?: string;
+}
+
 export function CreateTaskForm({ projectId, onTaskCreated }: CreateTaskFormProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [researchType, setResearchType] = useState('analytical_report');
+  
+  // Data aggregation config states
+  const [entities, setEntities] = useState('');
+  const [attributes, setAttributes] = useState('');
+  const [searchSpace, setSearchSpace] = useState('');
+  const [domainHint, setDomainHint] = useState('');
+  
   const queryClient = useQueryClient();
   const { addTaskToProject, addToast } = useAppStore();
 
@@ -80,6 +94,27 @@ export function CreateTaskForm({ projectId, onTaskCreated }: CreateTaskFormProps
       return;
     }
 
+    // Validate data aggregation config if selected
+    let dataAggregationConfig = null;
+    if (researchType === 'data_aggregation') {
+      if (!entities.trim() || !attributes.trim() || !searchSpace.trim()) {
+        addToast({
+          type: 'warning',
+          title: 'Missing Data Aggregation Configuration',
+          message: 'Please fill in all data aggregation fields',
+          duration: 4000
+        });
+        return;
+      }
+      
+      dataAggregationConfig = {
+        entities: entities.split(',').map(e => e.trim()).filter(e => e),
+        attributes: attributes.split(',').map(a => a.trim()).filter(a => a),
+        search_space: searchSpace.trim(),
+        domain_hint: domainHint.trim() || undefined
+      };
+    }
+
     console.log('Creating task with project_id:', projectId);
     
     createTaskMutation.mutate({
@@ -88,7 +123,7 @@ export function CreateTaskForm({ projectId, onTaskCreated }: CreateTaskFormProps
       research_type: researchType,
       project_id: projectId,
       user_id: null,
-      data_aggregation_config: null
+      data_aggregation_config: dataAggregationConfig
     });
   };
 
@@ -168,6 +203,75 @@ export function CreateTaskForm({ projectId, onTaskCreated }: CreateTaskFormProps
             </label>
           </div>
         </div>
+
+        {researchType === 'data_aggregation' && (
+          <div className="space-y-4 bg-gray-50 p-4 rounded-lg">
+            <h4 className="text-md font-medium text-gray-800">Data Aggregation Configuration</h4>
+            
+            <div>
+              <label htmlFor="entities" className="block text-sm font-medium text-gray-700 mb-1">
+                Entities
+              </label>
+              <input
+                type="text"
+                id="entities"
+                value={entities}
+                onChange={(e) => setEntities(e.target.value)}
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="e.g., private schools, hospitals, companies"
+              />
+              <p className="text-xs text-gray-500 mt-1">Comma-separated list of entities to aggregate data for</p>
+            </div>
+            
+            <div>
+              <label htmlFor="attributes" className="block text-sm font-medium text-gray-700 mb-1">
+                Attributes
+              </label>
+              <input
+                type="text"
+                id="attributes"
+                value={attributes}
+                onChange={(e) => setAttributes(e.target.value)}
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="e.g., name, address, website, enrollment, tuition"
+              />
+              <p className="text-xs text-gray-500 mt-1">Comma-separated list of attributes to extract for each entity</p>
+            </div>
+            
+            <div>
+              <label htmlFor="search-space" className="block text-sm font-medium text-gray-700 mb-1">
+                Search Space
+              </label>
+              <input
+                type="text"
+                id="search-space"
+                value={searchSpace}
+                onChange={(e) => setSearchSpace(e.target.value)}
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="e.g., in California, in the US, in New York City"
+              />
+              <p className="text-xs text-gray-500 mt-1">Geographic or categorical constraint for the search</p>
+            </div>
+            
+            <div>
+              <label htmlFor="domain-hint" className="block text-sm font-medium text-gray-700 mb-1">
+                Domain Hint (Optional)
+              </label>
+              <input
+                type="text"
+                id="domain-hint"
+                value={domainHint}
+                onChange={(e) => setDomainHint(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="e.g., education.private_schools, healthcare.hospitals"
+              />
+              <p className="text-xs text-gray-500 mt-1">Domain-specific hint to optimize data extraction</p>
+            </div>
+          </div>
+        )}
 
         <div className="flex justify-end pt-4">
           <button

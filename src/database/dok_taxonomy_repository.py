@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 import asyncpg
 import json
+import uuid
 
 from src.database.base_repository import BaseRepository
 from src.agents.research.summarization_agent import SourceSummary
@@ -32,6 +33,15 @@ class DOKTaxonomyRepository(BaseRepository):
         """
         
         try:
+            # Log the source being stored for debugging
+            source_id = source.get('source_id')
+            title = source.get('title', 'Unknown')
+            description_length = len(source.get('description', '')) if source.get('description') else 0
+            metadata = source.get('metadata', {})
+            metadata_task_id = metadata.get('task_id', 'unknown')
+            
+            logger.info(f"Storing source {source_id} for task {metadata_task_id} - Title: {title[:50]}..., Description length: {description_length}")
+            
             await self.execute_query(
                 query,
                 source.get('source_id'),
@@ -45,6 +55,8 @@ class DOKTaxonomyRepository(BaseRepository):
                 source.get('content_hash'),
                 source.get('reliability_score', 0.5)
             )
+            
+            logger.info(f"Successfully stored source {source.get('source_id')}")
             return True
         except Exception as e:
             logger.error(f"Error storing source {source.get('source_id')}: {str(e)}")
@@ -84,10 +96,8 @@ class DOKTaxonomyRepository(BaseRepository):
         """Check if a source with the given URL already exists for the specified task."""
         query = """
             SELECT COUNT(*) as count
-            FROM source_summaries ss
-            JOIN sources s ON ss.source_id = s.source_id
-            JOIN research_subtasks rs ON ss.subtask_id = rs.subtask_id
-            WHERE rs.task_id = $1 AND s.url = $2
+            FROM sources s
+            WHERE s.metadata->>'task_id' = $1 AND s.url = $2
         """
         
         try:
@@ -103,14 +113,15 @@ class DOKTaxonomyRepository(BaseRepository):
             SELECT ss.*, s.title, s.url, s.source_type, s.provider
             FROM source_summaries ss
             JOIN sources s ON ss.source_id = s.source_id
-            JOIN research_subtasks rs ON ss.subtask_id = rs.subtask_id
-            WHERE rs.task_id = $1
+            WHERE s.metadata->>'task_id' = $1
             ORDER BY ss.created_at DESC
         """
         
         try:
             rows = await self.fetch_all(query, task_id)
-            return [dict(row) for row in rows]
+            results = [dict(row) for row in rows]
+            logger.debug(f"Retrieved {len(results)} source summaries for task {task_id} using metadata filter")
+            return results
         except Exception as e:
             logger.error(f"Error fetching source summaries for task {task_id}: {str(e)}")
             return []
@@ -547,3 +558,105 @@ class DOKTaxonomyRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Error fetching bibliography for task {task_id}: {str(e)}")
             return {"sources": [], "total_sources": 0, "section_usage": {}}
+    
+    async def store_data_aggregation_result(
+        self,
+        task_id: str,
+        entity_type: str,
+        entity_data: Dict[str, Any],
+        unique_identifier: Optional[str] = None,
+        search_context: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Store a data aggregation result in the database."""
+        query = """
+            INSERT INTO data_aggregation_results (
+                task_id, entity_type, entity_data, unique_identifier, search_context,
+                created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """
+        
+        try:
+            await self.execute_query(
+                query,
+                task_id,
+                entity_type,
+                json.dumps(entity_data),
+                unique_identifier,
+                json.dumps(search_context) if search_context else None,
+                datetime.now(timezone.utc),
+                datetime.now(timezone.utc)
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error storing data aggregation result for task {task_id}: {str(e)}")
+            return False
+    
+    async def get_data_aggregation_results(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get all data aggregation results for a task."""
+        query = """
+            SELECT *
+            FROM data_aggregation_results
+            WHERE task_id = $1
+            ORDER BY created_at DESC
+        """
+        
+        try:
+            rows = await self.fetch_all(query, task_id)
+            results = []
+            for row in rows:
+                result = dict(row)
+                # Parse JSON fields
+                if result.get('entity_data') and isinstance(result['entity_data'], str):
+                    result['entity_data'] = json.loads(result['entity_data'])
+                if result.get('search_context') and isinstance(result['search_context'], str):
+                    result['search_context'] = json.loads(result['search_context'])
+                results.append(result)
+            return results
+        except Exception as e:
+            logger.error(f"Error fetching data aggregation results for task {task_id}: {str(e)}")
+            return []
+    
+    async def update_research_task_status(
+        self,
+        task_id: str,
+        status: str,
+        error_message: Optional[str] = None
+    ) -> bool:
+        """Update research task status."""
+        query = """
+            UPDATE research_tasks 
+            SET status = $2, error_message = $3, updated_at = $4
+            WHERE task_id = $1
+        """
+        
+        try:
+            await self.execute_query(
+                query,
+                task_id,
+                status,
+                error_message,
+                datetime.now(timezone.utc)
+            )
+            logger.info(f"Updated research task {task_id} status to {status}")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating research task {task_id} status: {str(e)}")
+            return False
+    
+    async def get_search_results_for_task(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get all search results for a specific research task."""
+        query = """
+            SELECT source_id, url, title, description, provider, metadata, created_at
+            FROM sources 
+            WHERE metadata->>'task_id' = $1
+            ORDER BY created_at DESC
+        """
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(query, task_id)
+                results = [dict(row) for row in rows]
+                logger.info(f"Retrieved {len(results)} search results for task {task_id}")
+                return results
+        except Exception as e:
+            logger.error(f"Error retrieving search results for task {task_id}: {str(e)}")
+            return []

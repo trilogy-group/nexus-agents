@@ -67,6 +67,7 @@ class ResearchWorker:
         # Components
         self.nexus_agents: Optional[NexusAgents] = None
         self.research_orchestrator: Optional[ResearchOrchestrator] = None
+        self.task_coordinator: Optional[ParallelTaskCoordinator] = None
         
         # Control flags
         self.running = False
@@ -106,6 +107,14 @@ class ResearchWorker:
         logger.info(f"Stopping worker {self.worker_id}")
         self.running = False
         self.shutdown_event.set()
+        
+        # Cancel parallel task processor if it exists
+        if hasattr(self, 'parallel_task_processor') and self.parallel_task_processor:
+            self.parallel_task_processor.cancel()
+            try:
+                await self.parallel_task_processor
+            except asyncio.CancelledError:
+                pass
         
         # Clean up connections
         if self.nexus_agents:
@@ -169,14 +178,53 @@ class ResearchWorker:
         llm_client = LLMClient()
         
         # Create DOK workflow orchestrator
+        from src.database.dok_taxonomy_repository import DOKTaxonomyRepository
+        dok_repository = DOKTaxonomyRepository(db)
         dok_workflow = DOKWorkflowOrchestrator(
-            llm_client=llm_client
+            llm_client=llm_client,
+            dok_repository=dok_repository
         )
+        
+        # Ensure DOK workflow orchestrator uses the same database connection
+        dok_workflow.dok_repository.knowledge_base = db
+        dok_workflow.dok_repository._pool = db.pool
         
         # Load LLM config
         llm_config_path = os.getenv("LLM_CONFIG", "config/llm_config.json")
         with open(llm_config_path, 'r') as f:
             llm_config = json.load(f)
+        
+        # Store task coordinator reference
+        self.task_coordinator = task_coordinator
+        
+        # Set the dok_repository on the task coordinator for DOK operations
+        task_coordinator.dok_repository = dok_repository
+        
+        # Set the data aggregation repository on the task coordinator
+        from src.database.data_aggregation_repository import DataAggregationRepository
+        data_aggregation_repository = DataAggregationRepository(db)
+        task_coordinator.data_aggregation_repository = data_aggregation_repository
+        
+        # Ensure the data aggregation repository has access to the knowledge base
+        if hasattr(data_aggregation_repository, 'knowledge_base'):
+            if data_aggregation_repository.knowledge_base is None:
+                data_aggregation_repository.knowledge_base = db
+                logger.info("Assigned knowledge base to data aggregation repository")
+            # Also ensure the knowledge base reference is set correctly
+            elif data_aggregation_repository.knowledge_base != db:
+                data_aggregation_repository.knowledge_base = db
+                logger.info("Reassigned knowledge base to data aggregation repository")
+        
+        # Log the assignment for debugging
+        logger.info(f"Task coordinator data_aggregation_repository assigned: {task_coordinator.data_aggregation_repository is not None}")
+        if task_coordinator.data_aggregation_repository:
+            logger.info(f"Data aggregation repository knowledge base: {task_coordinator.data_aggregation_repository.knowledge_base is not None}")
+        
+        # Start parallel task processing in background
+        self.parallel_task_processor = asyncio.create_task(task_coordinator.process_tasks())
+        
+        # Store reference to task coordinator for proper shutdown
+        self.task_coordinator = task_coordinator
         
         # Create consolidated research orchestrator
         self.research_orchestrator = ResearchOrchestrator(
@@ -192,52 +240,52 @@ class ResearchWorker:
         
         while self.running:
             try:
-                # Use blocking pop with timeout to get next task
+                # Use blocking pop with timeout to get next task from main queue
                 task_data = await self.redis_client.blpop(
                     self.task_queue_key,
-                    timeout=5  # 5 second timeout
+                    timeout=1  # 1 second timeout
                 )
                 
-                if task_data is None:
-                    # No tasks available, continue waiting
-                    continue
+                if task_data is not None:
+                    # Parse task data
+                    _, task_json = task_data
+                    task = json.loads(task_json)
+                    task_id = task["task_id"]
                     
-                # Parse task data
-                _, task_json = task_data
-                task = json.loads(task_json)
-                task_id = task["task_id"]
-                
-                logger.info(f"Processing task {task_id}: {task.get('title', 'Untitled')}")
+                    logger.info(f"Processing task {task_id}: {task.get('title', 'Untitled')}")
 
-                # Ensure task exists in DB (create if missing) - use shared PostgreSQL knowledge base
-                kb = self.nexus_agents.knowledge_base
-                existing = await kb.get_task(task_id)
-                if not existing:
-                    await kb.create_task(
-                        task_id=task_id,
-                        title=task.get("title"),
-                        description=task.get("description"),
-                        query=task.get("description"),
-                        metadata={
-                            "continuous_mode": task.get("continuous_mode"),
-                            "continuous_interval_hours": task.get("continuous_interval_hours"),
-                        },
-                    )
-                # No need to disconnect - PostgreSQL uses connection pooling
+                    # Ensure task exists in DB (create if missing) - use shared PostgreSQL knowledge base
+                    kb = self.nexus_agents.knowledge_base
+                    existing = await kb.get_task(task_id)
+                    if not existing:
+                        await kb.create_task(
+                            task_id=task_id,
+                            title=task.get("title"),
+                            description=task.get("description"),
+                            query=task.get("description"),
+                            metadata={
+                                "continuous_mode": task.get("continuous_mode"),
+                                "continuous_interval_hours": task.get("continuous_interval_hours"),
+                            },
+                        )
+                    # No need to disconnect - PostgreSQL uses connection pooling
+                    
+                    # Move task to processing set
+                    await self.redis_client.sadd(self.processing_key, task_json)
+                    
+                    # Update task status in database using shared PostgreSQL knowledge base
+                    await self._update_task_status_pg(task_id, TaskStatus.PLANNING)
+                    
+                    # Execute the research task
+                    await self._execute_research_task(task)
+                    
+                    # Remove from processing set
+                    await self.redis_client.srem(self.processing_key, task_json)
+                    
+                    logger.info(f"Completed task {task_id}")
                 
-                # Move task to processing set
-                await self.redis_client.sadd(self.processing_key, task_json)
-                
-                # Update task status in database using shared PostgreSQL knowledge base
-                await self._update_task_status_pg(task_id, TaskStatus.PLANNING)
-                
-                # Execute the research task
-                await self._execute_research_task(task)
-                
-                # Remove from processing set
-                await self.redis_client.srem(self.processing_key, task_json)
-                
-                logger.info(f"Completed task {task_id}")
+                # Parallel tasks are processed in background, no need to call process_all_tasks here
+                pass
                 
             except asyncio.CancelledError:
                 logger.info("Task processing cancelled")
@@ -251,20 +299,32 @@ class ResearchWorker:
                     await self.redis_client.lpush(self.task_queue_key, task_json)
                     await self.redis_client.srem(self.processing_key, task_json)
                     
+            # Small delay to prevent busy waiting
+            await asyncio.sleep(0.1)
+                    
     async def _execute_research_task(self, task: Dict[str, Any]):
         """Execute a research task using the Nexus Agents system."""
         task_id = task["task_id"]
+        research_type = task.get("research_type", "analytical_report")
         
         try:
             # Update status to searching using shared PostgreSQL knowledge base
             await self._update_task_status_pg(task_id, TaskStatus.SEARCHING)
             
-            # Execute the research using consolidated ResearchOrchestrator
-            # This ensures DOK taxonomy, summarization, and reasoning work end-to-end
-            result = await self.research_orchestrator.execute_analytical_report(
-                task_id=task_id,
-                query=task["description"]
-            )
+            if research_type == "data_aggregation":
+                # Execute data aggregation task
+                config = task.get("config", {})
+                result = await self.research_orchestrator.execute_data_aggregation(
+                    task_id=task_id,
+                    config=config
+                )
+            else:
+                # Execute the research using consolidated ResearchOrchestrator
+                # This ensures DOK taxonomy, summarization, and reasoning work end-to-end
+                result = await self.research_orchestrator.execute_analytical_report(
+                    task_id=task_id,
+                    query=task["description"]
+                )
             
             # Update status to completed using shared PostgreSQL knowledge base
             await self._update_task_status_pg(task_id, TaskStatus.COMPLETED)

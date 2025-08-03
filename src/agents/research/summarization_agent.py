@@ -171,8 +171,7 @@ Facts:
                 
         except Exception as e:
             logger.error(f"Error extracting DOK1 facts: {str(e)}")
-            # Return a default fact to avoid empty results
-            return [f"Information from {metadata.get('title', 'source')} about {context}"]
+            return []
     
     async def _create_summary(
         self,

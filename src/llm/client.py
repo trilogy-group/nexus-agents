@@ -420,7 +420,13 @@ class LLMClient:
         
         response = await client.chat.completions.create(**params)
         
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        if not content:
+            logger.warning(f"OpenAI returned empty content for model {config.model_name}")
+            logger.debug(f"Full response: {response}")
+            return ""
+        
+        return content
     
     async def _generate_anthropic(self, prompt: str, config: LLMConfig) -> str:
         """Generate text using Anthropic."""

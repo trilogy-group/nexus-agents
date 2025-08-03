@@ -35,10 +35,27 @@ export function DOKTaxonomySection({ taskId, taskTitle }: DOKTaxonomySectionProp
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['knowledge_tree']));
   const [showBrainLiftModal, setShowBrainLiftModal] = useState(false);
 
-  // Fetch DOK taxonomy data
+  // Fetch task details to determine research type
+  const { data: taskDetails } = useQuery({
+    queryKey: ['task', taskId],
+    queryFn: async () => {
+      const response = await fetch(`http://localhost:12000/api/tasks/${taskId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch task details: ${response.status}`);
+      }
+      return response.json();
+    },
+  });
+
+  // Fetch DOK taxonomy data only for analytical report tasks
   const { data: dokData, isLoading: dokLoading, error: dokError } = useQuery({
     queryKey: ['dok-taxonomy', taskId],
     queryFn: async () => {
+      // Check if this is a data aggregation task
+      if (taskDetails && taskDetails.research_type === 'data_aggregation') {
+        return null;
+      }
+      
       const response = await fetch(`http://localhost:12000/api/dok/tasks/${taskId}/dok-complete`);
       if (!response.ok) {
         throw new Error(`Failed to fetch DOK taxonomy: ${response.status}`);

@@ -128,18 +128,30 @@ class PostgresKnowledgeBase:
         description: str, 
         query: str = None, 
         status: str = "pending", 
-        metadata: Dict[str, Any] = None
+        metadata: Dict[str, Any] = None,
+        project_id: str = None
     ) -> str:
         """Create a new research task."""
+        # If no project_id provided, use the default project
+        if not project_id:
+            async with self.pool.acquire() as conn:
+                default_project = await conn.fetchrow(
+                    "SELECT id FROM projects WHERE name = $1",
+                    "Default Project"
+                )
+                if default_project:
+                    project_id = default_project["id"]
+        
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO research_tasks (
-                    task_id, title, description, research_query, status, metadata
-                ) VALUES ($1, $2, $3, $4, $5, $6)
+                    task_id, title, description, research_query, status, metadata, project_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
                 task_id, title, description, query, status, 
-                json.dumps(metadata) if metadata else None
+                json.dumps(metadata) if metadata else None,
+                project_id
             )
         
         logger.info(f"Created task {task_id}: {title}")
@@ -524,19 +536,29 @@ class PostgresKnowledgeBase:
     
     # Research Task Management Methods
     async def store_research_task(self, task_id: str, research_query: str, status: str, 
-                                user_id: str = None, created_at: datetime = None) -> str:
+                                user_id: str = None, created_at: datetime = None, project_id: str = None) -> str:
         """Store a new research task."""
         if created_at is None:
             created_at = datetime.now(timezone.utc)
+        
+        # If no project_id provided, use the default project
+        if not project_id:
+            async with self.pool.acquire() as conn:
+                default_project = await conn.fetchrow(
+                    "SELECT id FROM projects WHERE name = $1",
+                    "Default Project"
+                )
+                if default_project:
+                    project_id = default_project["id"]
             
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO research_tasks (
-                    task_id, research_query, status, user_id, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6)
+                    task_id, research_query, status, user_id, created_at, updated_at, project_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
-                task_id, research_query, status, user_id, created_at, created_at
+                task_id, research_query, status, user_id, created_at, created_at, project_id
             )
         
         logger.info(f"Stored research task {task_id}: {research_query[:50]}...")
@@ -722,6 +744,16 @@ class PostgresKnowledgeBase:
     async def get_research_report(self, task_id: str) -> Optional[str]:
         """Get research report markdown content."""
         async with self.pool.acquire() as conn:
+            # First check if this is a data aggregation task
+            task_row = await conn.fetchrow(
+                "SELECT research_type FROM research_tasks WHERE task_id = $1",
+                task_id
+            )
+            
+            if task_row and task_row['research_type'] == 'data_aggregation':
+                # For data aggregation tasks, return a special marker
+                return "[DATA_AGGREGATION_TASK]"
+            
             row = await conn.fetchrow(
                 "SELECT report_markdown FROM research_reports WHERE task_id = $1",
                 task_id
@@ -731,6 +763,39 @@ class PostgresKnowledgeBase:
                 return row['report_markdown']
             
             return None
+    
+    async def get_data_aggregation_results(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get data aggregation results for a task."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM data_aggregation_results 
+                WHERE task_id = $1 
+                ORDER BY created_at DESC
+                """,
+                task_id
+            )
+            
+            results = []
+            for row in rows:
+                result = dict(row)
+                # Parse JSON fields
+                if isinstance(result.get('entity_data'), str):
+                    try:
+                        result['entity_data'] = json.loads(result['entity_data'])
+                    except json.JSONDecodeError:
+                        result['entity_data'] = {}
+                
+                if isinstance(result.get('search_context'), str):
+                    try:
+                        result['search_context'] = json.loads(result['search_context'])
+                    except json.JSONDecodeError:
+                        result['search_context'] = {}
+                
+                results.append(result)
+            
+            return results
+    
     
     async def delete_research_task(self, task_id: str) -> bool:
         """

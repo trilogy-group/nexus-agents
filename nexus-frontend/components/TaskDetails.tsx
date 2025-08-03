@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Clock, CheckCircle, XCircle, FileText, BarChart, AlertCircle, Trash2 } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, FileText, BarChart, AlertCircle, Trash2, Download } from 'lucide-react';
 import { api, ResearchTask } from '@/lib/api';
 import { useAppStore } from '@/lib/store';
 import { TaskTimeline } from './TaskTimeline';
@@ -15,7 +15,7 @@ interface TaskDetailsProps {
 }
 
 export function TaskDetails({ taskId }: TaskDetailsProps) {
-  const [activeTab, setActiveTab] = useState<'timeline' | 'report' | 'knowledge'>('timeline');
+  const [activeTab, setActiveTab] = useState<'timeline' | 'report' | 'knowledge' | 'entities' | 'export'>('timeline');
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const { setSelectedTask } = useAppStore();
   const queryClient = useQueryClient();
@@ -102,7 +102,31 @@ export function TaskDetails({ taskId }: TaskDetailsProps) {
               </span>
             </div>
           </div>
-          <div>
+          <div className="flex space-x-2">
+            {task.research_type === 'data_aggregation' && task.status === 'completed' && (
+              <button
+                onClick={async () => {
+                  try {
+                    const response = await api.tasks.exportCSV(taskId);
+                    const url = window.URL.createObjectURL(new Blob([response.data]));
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.setAttribute('download', `${taskId}_data.csv`);
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    window.URL.revokeObjectURL(url);
+                  } catch (error) {
+                    console.error('Error downloading CSV:', error);
+                  }
+                }}
+                className="inline-flex items-center px-3 py-2 border border-green-300 text-sm font-medium rounded-md text-green-700 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-gray-800 dark:border-green-600 dark:text-green-400 dark:hover:bg-green-900/20"
+                title="Download CSV Export"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Download CSV
+              </button>
+            )}
             <button
               onClick={handleDeleteTask}
               disabled={deleteTaskMutation.isPending}
@@ -119,33 +143,93 @@ export function TaskDetails({ taskId }: TaskDetailsProps) {
       {/* Tabs */}
       <div className="border-b border-gray-200 dark:border-gray-700">
         <nav className="-mb-px flex space-x-8 px-6">
-          {[
-            { id: 'timeline', label: 'Timeline', icon: BarChart },
-            { id: 'report', label: 'Report', icon: FileText },
-            { id: 'knowledge', label: 'DOK Taxonomy', icon: AlertCircle },
-          ].map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => setActiveTab(id as any)}
-              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
-                activeTab === id
-                  ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              <span>{label}</span>
-            </button>
-          ))}
+          {task.research_type === 'data_aggregation' ? (
+            [
+              { id: 'timeline', label: 'Processing Timeline', icon: BarChart },
+              { id: 'entities', label: 'Extracted Entities', icon: FileText },
+              { id: 'export', label: 'Export Data', icon: Download },
+            ].map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id as any)}
+                className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+                  activeTab === id
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{label}</span>
+              </button>
+            ))
+          ) : (
+            [
+              { id: 'timeline', label: 'Timeline', icon: BarChart },
+              { id: 'report', label: 'Report', icon: FileText },
+              { id: 'knowledge', label: 'DOK Taxonomy', icon: AlertCircle },
+            ].map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id as any)}
+                className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+                  activeTab === id
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{label}</span>
+              </button>
+            ))
+          )}
         </nav>
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 min-w-0">
         <div className="w-full max-w-full overflow-hidden">
-          {activeTab === 'timeline' && <TaskTimeline taskId={taskId} />}
-          {activeTab === 'report' && <TaskReport taskId={taskId} taskStatus={task.status} />}
-          {activeTab === 'knowledge' && <DOKTaxonomySection taskId={taskId} taskTitle={task.title || task.research_query} />}
+          {task.research_type === 'data_aggregation' ? (
+            <>
+              {activeTab === 'timeline' && <TaskTimeline taskId={taskId} />}
+              {activeTab === 'entities' && <TaskReport taskId={taskId} taskStatus={task.status} />}
+              {activeTab === 'export' && (
+                <div className="flex flex-col items-center justify-center h-full">
+                  <h2 className="text-xl font-semibold mb-4">Export Data</h2>
+                  <p className="text-gray-600 dark:text-gray-300 mb-6">
+                    Download the aggregated data as a CSV file
+                  </p>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const response = await api.tasks.exportCSV(taskId);
+                        const url = window.URL.createObjectURL(new Blob([response.data]));
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.setAttribute('download', `${taskId}_data.csv`);
+                        document.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                        window.URL.revokeObjectURL(url);
+                      } catch (error) {
+                        console.error('Error downloading CSV:', error);
+                      }
+                    }}
+                    className="inline-flex items-center px-4 py-2 border border-green-300 text-sm font-medium rounded-md text-green-700 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-gray-800 dark:border-green-600 dark:text-green-400 dark:hover:bg-green-900/20"
+                    title="Download CSV Export"
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    Download CSV
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {activeTab === 'timeline' && <TaskTimeline taskId={taskId} />}
+              {activeTab === 'report' && <TaskReport taskId={taskId} taskStatus={task.status} />}
+              {activeTab === 'knowledge' && <DOKTaxonomySection taskId={taskId} taskTitle={task.title || task.research_query} />}
+            </>
+          )}
         </div>
       </div>
 

@@ -27,6 +27,10 @@ from .summarization.reasoning_agent import ReasoningAgent
 from .persistence.postgres_knowledge_base import PostgresKnowledgeBase
 import time
 
+# Import and register domain processors
+from .domain_processors import register_processor
+from .domain_processors.private_schools import PrivateSchoolsProcessor
+
 # Set up logger
 logger = logging.getLogger(__name__)
 
@@ -98,6 +102,12 @@ class NexusAgents:
         # Initialize MCP search client
         print("Initializing MCP search client...")
         await self.mcp_client.initialize()
+        
+        # Register domain processors
+        private_schools_processor = PrivateSchoolsProcessor()
+        private_schools_processor.llm_client = self.llm_client
+        register_processor(private_schools_processor, "education.private_schools")
+        print("Registered domain processors")
         
         # Create and start the agents
         await self._create_and_start_agents()

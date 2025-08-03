@@ -34,6 +34,12 @@ graph TB
     SA --> PSA["🧠 Perplexity<br/>Search Agent"]
     SA --> FSA["🕷️ Firecrawl<br/>Search Agent"]
     
+    %% Data Aggregation Agents
+    NA --> DAA["📊 Data Aggregation<br/>Agents"]
+    DAA --> SSE["🔍 Search Space<br/>Enumerator"]
+    DAA --> EE["📄 Entity<br/>Extractor"]
+    DAA --> ER["🔗 Entity<br/>Resolver"]
+    
     %% MCP Integration
     LSA --> MCP1["📡 MCP Server<br/>(Linkup)"]
     ESA --> MCP2["📡 MCP Server<br/>(Exa)"]
@@ -51,6 +57,9 @@ graph TB
     %% LLM Integration
     TDA --> LLM["🤖 Multi-Provider<br/>LLM Client"]
     PA --> LLM
+    SSE --> LLM
+    EE --> LLM
+    ER --> LLM
     SUA --> LLM
     RA --> LLM
     
@@ -67,10 +76,12 @@ graph TB
     classDef mcpLayer fill:#fff3e0,stroke:#e65100,stroke-width:2px
     classDef dataLayer fill:#fce4ec,stroke:#880e4f,stroke-width:2px
     classDef llmLayer fill:#f1f8e9,stroke:#33691e,stroke-width:2px
+    classDef dataAggLayer fill:#e0f2f1,stroke:#00695c,stroke-width:2px
     
     class UI webLayer
     class API,RQ apiLayer
     class W,CB,NA,TDA,PA,SA,LSA,ESA,PSA,FSA,SUA,RA agentLayer
+    class DAA,SSE,EE,ER dataAggLayer
     class MCP1,MCP2,MCP3,MCP4 mcpLayer
     class DB,FS dataLayer
     class LLM,OpenAI,Anthropic,Google,XAI llmLayer
@@ -122,6 +133,7 @@ This architecture enables stable multi-agent concurrent operations with proper d
 - **Hierarchical Processing**: Tree-of-thoughts approach to complex queries
 - **Human-in-the-Loop**: Interactive refinement and feedback mechanisms
 - **Scalable Architecture**: Horizontal scaling and resilient error handling
+- **Data Aggregation Research**: Structured data collection and synthesis with CSV export
 
 ## 📦 Installation
 
@@ -346,6 +358,58 @@ rm logs/worker.log && ./scripts/stop_dev.sh --all && ./scripts/start_dev_full.sh
 
 # Check system status
 curl http://localhost:12000/health
+```
+
+## 📊 Data Aggregation Research Usage
+
+The system supports a specialized research type for structured data collection:
+
+### Creating Data Aggregation Tasks
+
+1. **Open the web interface** in your browser
+2. **Click "Create Data Aggregation Task"**
+3. **Fill in the configuration fields**:
+   - **Entities**: What type of entities to search for (e.g., "private schools")
+   - **Attributes**: What data points to extract for each entity (e.g., "name, address, website, enrollment, tuition")
+   - **Search Space**: Geographic or categorical constraints (e.g., "in California")
+   - **Domain Hint** (Optional): Specialized processing for specific domains (e.g., "education.private_schools")
+4. **Click "Start Aggregation"** to begin
+5. **Monitor progress** in real-time:
+   - Search space enumeration phase
+   - Parallel data extraction from multiple sources
+   - Entity resolution and deduplication
+   - CSV generation
+
+### Downloading Results
+
+Once a data aggregation task is complete:
+1. **Navigate to the task details page**
+2. **Click "Download CSV Export"** to get the structured data
+3. **The CSV will contain all extracted entities with their attributes**
+
+### API Usage
+
+Create a data aggregation task:
+```bash
+curl -X POST http://localhost:12000/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "California Private Schools",
+    "research_query": "Private schools in California",
+    "research_type": "data_aggregation",
+    "data_aggregation_config": {
+      "entities": ["private schools"],
+      "attributes": ["name", "address", "website", "enrollment", "tuition"],
+      "search_space": "in California",
+      "domain_hint": "education.private_schools"
+    }
+  }'
+```
+
+Export results as CSV:
+```bash
+curl -X GET http://localhost:12000/tasks/{task_id}/export/csv \
+  -O -J
 ```
 
 ## 🔍 Search Providers
