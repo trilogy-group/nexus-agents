@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 import asyncpg
 import json
+import uuid
 
 from src.database.base_repository import BaseRepository
 from src.agents.research.summarization_agent import SourceSummary
@@ -547,3 +548,56 @@ class DOKTaxonomyRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Error fetching bibliography for task {task_id}: {str(e)}")
             return {"sources": [], "total_sources": 0, "section_usage": {}}
+    
+    async def store_data_aggregation_result(
+        self,
+        task_id: str,
+        entity_type: str,
+        entity_data: Dict[str, Any],
+        unique_identifier: Optional[str] = None,
+        search_context: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Store a data aggregation result in the database."""
+        query = """
+            INSERT INTO data_aggregation_results (
+                task_id, entity_type, entity_data, unique_identifier, search_context,
+                created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """
+        
+        try:
+            await self.execute_query(
+                query,
+                task_id,
+                entity_type,
+                json.dumps(entity_data),
+                unique_identifier,
+                json.dumps(search_context) if search_context else None,
+                datetime.now(timezone.utc),
+                datetime.now(timezone.utc)
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error storing data aggregation result for task {task_id}: {str(e)}")
+            return False
+    
+    async def get_data_aggregation_results(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get all data aggregation results for a task."""
+        query = """
+            SELECT *
+            FROM data_aggregation_results
+            WHERE task_id = $1
+            ORDER BY created_at DESC
+        """
+        
+        try:
+            rows = await self.fetch_all(query, task_id)
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error fetching data aggregation results for task {task_id}: {str(e)}")
+            return []
+    
+    async def get_search_results_for_task(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get all search results for a task."""
+        # For data aggregation tasks, we can use the source summaries as search results
+        return await self.get_source_summaries_by_task(task_id)

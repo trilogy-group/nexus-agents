@@ -128,18 +128,30 @@ class PostgresKnowledgeBase:
         description: str, 
         query: str = None, 
         status: str = "pending", 
-        metadata: Dict[str, Any] = None
+        metadata: Dict[str, Any] = None,
+        project_id: str = None
     ) -> str:
         """Create a new research task."""
+        # If no project_id provided, use the default project
+        if not project_id:
+            async with self.pool.acquire() as conn:
+                default_project = await conn.fetchrow(
+                    "SELECT id FROM projects WHERE name = $1",
+                    "Default Project"
+                )
+                if default_project:
+                    project_id = default_project["id"]
+        
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO research_tasks (
-                    task_id, title, description, research_query, status, metadata
-                ) VALUES ($1, $2, $3, $4, $5, $6)
+                    task_id, title, description, research_query, status, metadata, project_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
                 task_id, title, description, query, status, 
-                json.dumps(metadata) if metadata else None
+                json.dumps(metadata) if metadata else None,
+                project_id
             )
         
         logger.info(f"Created task {task_id}: {title}")
@@ -524,19 +536,29 @@ class PostgresKnowledgeBase:
     
     # Research Task Management Methods
     async def store_research_task(self, task_id: str, research_query: str, status: str, 
-                                user_id: str = None, created_at: datetime = None) -> str:
+                                user_id: str = None, created_at: datetime = None, project_id: str = None) -> str:
         """Store a new research task."""
         if created_at is None:
             created_at = datetime.now(timezone.utc)
+        
+        # If no project_id provided, use the default project
+        if not project_id:
+            async with self.pool.acquire() as conn:
+                default_project = await conn.fetchrow(
+                    "SELECT id FROM projects WHERE name = $1",
+                    "Default Project"
+                )
+                if default_project:
+                    project_id = default_project["id"]
             
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO research_tasks (
-                    task_id, research_query, status, user_id, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6)
+                    task_id, research_query, status, user_id, created_at, updated_at, project_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
-                task_id, research_query, status, user_id, created_at, created_at
+                task_id, research_query, status, user_id, created_at, created_at, project_id
             )
         
         logger.info(f"Stored research task {task_id}: {research_query[:50]}...")

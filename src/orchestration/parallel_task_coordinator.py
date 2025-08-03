@@ -222,16 +222,100 @@ class ParallelTaskCoordinator:
                 await self._store_task_error(task.id, str(e))
     
     async def _execute_task(self, task: Task) -> Dict[str, Any]:
-        """Execute the actual task (placeholder for now)."""
-        # This will be replaced with actual task execution logic
-        # For now, simulate processing time
-        await asyncio.sleep(0.1)
+        """Execute the actual task."""
+        try:
+            if task.type == TaskType.DATA_AGGREGATION_SEARCH:
+                # Handle data aggregation search tasks with higher result limit
+                return await self._execute_data_aggregation_search(task)
+            elif task.type == TaskType.DATA_AGGREGATION_EXTRACT:
+                # Handle data aggregation extraction tasks
+                return await self._execute_data_aggregation_extract(task)
+            else:
+                # For other task types, simulate processing time
+                await asyncio.sleep(0.1)
+                
+                return {
+                    "status": "completed",
+                    "task_type": task.type.value,
+                    "processed_at": datetime.now(timezone.utc).isoformat()
+                }
+        except Exception as e:
+            logger.error(f"Task execution failed: {e}", exc_info=True)
+            return {
+                "status": "failed",
+                "task_type": task.type.value,
+                "error": str(e),
+                "processed_at": datetime.now(timezone.utc).isoformat()
+            }
+    
+    async def _execute_data_aggregation_search(self, task: Task) -> Dict[str, Any]:
+        """Execute data aggregation search task with high result limit."""
+        # Import here to avoid circular dependencies
+        from ..mcp_client import MCPClient, MCPSearchClient
+        from ..config.search_providers import SearchProvidersConfig
         
-        return {
-            "status": "completed",
-            "task_type": task.type.value,
-            "processed_at": datetime.now(timezone.utc).isoformat()
-        }
+        try:
+            # Initialize MCP search client
+            mcp_client = MCPClient()
+            mcp_search_client = MCPSearchClient(mcp_client)
+            
+            # Get query from task payload
+            query = task.payload.get("query", "")
+            if not query:
+                raise ValueError("Missing query in task payload")
+            
+            # Execute search with very high result limit for data aggregation
+            results = await mcp_search_client.search_web(query, max_results=500000)
+            
+            logger.info(f"Data aggregation search completed for task {task.id}: {len(results)} results")
+            
+            return {
+                "status": "completed",
+                "task_type": task.type.value,
+                "results": results,
+                "query": query,
+                "processed_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Data aggregation search failed for task {task.id}: {e}", exc_info=True)
+            raise
+    
+    async def _execute_data_aggregation_extract(self, task: Task) -> Dict[str, Any]:
+        """Execute data aggregation extraction task."""
+        # Import here to avoid circular dependencies
+        from ..agents.aggregation.entity_extractor import EntityExtractor
+        from ..domain_processors.registry import get_global_registry
+        
+        try:
+            # Get content and parameters from task payload
+            content = task.payload.get("content", "")
+            entity_type = task.payload.get("entity_type", "")
+            attributes = task.payload.get("attributes", [])
+            domain_hint = task.payload.get("domain_hint")
+            
+            if not content:
+                raise ValueError("Missing content in task payload")
+            
+            # Initialize entity extractor
+            domain_registry = get_global_registry()
+            entity_extractor = EntityExtractor(domain_registry)
+            
+            # Extract entities
+            entities = await entity_extractor.extract(content, entity_type, attributes, domain_hint)
+            
+            logger.info(f"Entity extraction completed for task {task.id}: {len(entities)} entities")
+            
+            return {
+                "status": "completed",
+                "task_type": task.type.value,
+                "entities": entities,
+                "processed_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Entity extraction failed for task {task.id}: {e}", exc_info=True)
+            raise
     
     async def _update_task_status(self, task_id: str, status: TaskStatus):
         """Update task status in Redis."""

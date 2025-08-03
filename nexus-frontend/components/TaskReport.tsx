@@ -4,6 +4,7 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Download } from 'lucide-react';
 import { api } from '@/lib/api';
 
 interface TaskReportProps {
@@ -12,10 +13,27 @@ interface TaskReportProps {
 }
 
 export function TaskReport({ taskId, taskStatus }: TaskReportProps) {
-  // Fetch task report
+  // Fetch task details to determine research type
+  const { data: taskDetails } = useQuery({
+    queryKey: ['task', taskId],
+    queryFn: async () => {
+      const response = await fetch(`http://localhost:12000/api/tasks/${taskId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch task details: ${response.status}`);
+      }
+      return response.json();
+    },
+  });
+
+  // Fetch task report only for analytical report tasks
   const { data: report, isLoading: reportLoading } = useQuery({
     queryKey: ['task-report', taskId],
     queryFn: async () => {
+      // Check if this is a data aggregation task
+      if (taskDetails && taskDetails.research_type === 'data_aggregation') {
+        return null;
+      }
+      
       const response = await api.tasks.getReport(taskId);
       return response.data as string;
     },
@@ -35,6 +53,25 @@ export function TaskReport({ taskId, taskStatus }: TaskReportProps) {
   }
 
   if (!report && taskStatus === 'completed') {
+    // Check if this is a data aggregation task
+    if (taskDetails && taskDetails.research_type === 'data_aggregation') {
+      return (
+        <div className="text-center py-8">
+          <div className="text-gray-500 mb-2">Data Aggregation Task</div>
+          <div className="text-sm text-gray-400 mb-4">
+            This task type generates structured data exports instead of analytical reports.
+          </div>
+          <button
+            onClick={() => window.open(`/api/tasks/${taskId}/export/csv`, '_blank')}
+            className="inline-flex items-center px-4 py-2 border border-green-300 text-sm font-medium rounded-md text-green-700 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Download CSV Export
+          </button>
+        </div>
+      );
+    }
+    
     return (
       <div className="text-center py-8">
         <div className="text-gray-500 mb-2">No report available</div>

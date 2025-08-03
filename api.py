@@ -14,6 +14,7 @@ import redis.asyncio as redis
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -59,6 +60,7 @@ from src.api.dok_taxonomy_endpoints import router as dok_router
 from src.agents.research.dok_workflow_orchestrator import DOKWorkflowOrchestrator
 from src.models.research_types import ResearchType, DataAggregationConfig
 from src.llm import LLMClient
+from src.export.csv_exporter import CSVExporter
 
 # Load environment variables
 load_dotenv(override=True)
@@ -83,6 +85,7 @@ redis_client: Optional[redis.Redis] = None
 task_queue_key = "nexus:task_queue"
 global_research_orchestrator: Optional[ResearchOrchestrator] = None
 global_task_coordinator: Optional[ParallelTaskCoordinator] = None
+global_csv_exporter: Optional[CSVExporter] = None
 
 
 # Define the API models
@@ -163,7 +166,7 @@ async def get_kb(read_only: bool = True):
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections and systems on startup."""
-    global redis_client, global_kb, global_research_orchestrator, global_task_coordinator
+    global redis_client, global_kb, global_research_orchestrator, global_task_coordinator, global_csv_exporter
     
     # Get configuration from environment variables
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -213,9 +216,19 @@ async def startup_event():
         )
         
         # Initialize DOK workflow orchestrator
+        from src.database.dok_taxonomy_repository import DOKTaxonomyRepository
+        dok_repository = DOKTaxonomyRepository(global_kb)
         dok_workflow = DOKWorkflowOrchestrator(
-            llm_client=llm_client
+            llm_client=llm_client,
+            dok_repository=dok_repository
         )
+        
+        # Ensure DOK workflow orchestrator uses the same database connection
+        dok_workflow.dok_repository.knowledge_base = global_kb
+        dok_workflow.dok_repository._pool = global_kb.pool
+        
+        # Initialize CSV exporter
+        global_csv_exporter = CSVExporter(dok_repository=global_kb)
         
         # Initialize consolidated Research Orchestrator with enhanced features
         global_research_orchestrator = ResearchOrchestrator(
@@ -304,8 +317,44 @@ async def create_research_task(task: ResearchTaskQuery):
             raise HTTPException(status_code=500, detail=f"Failed to create research task: {str(e)}")
     
     elif task.research_type == ResearchType.DATA_AGGREGATION:
-        # TODO: Implement data aggregation workflow
-        raise HTTPException(status_code=501, detail="Data aggregation research type not yet implemented")
+        # Use data aggregation workflow
+        try:
+            # Create task in database first
+            async with get_kb() as kb:
+                task_id = await kb.create_research_task(
+                    title=task.title,
+                    research_query=task.research_query,
+                    user_id=task.user_id,
+                    project_id=task.project_id,
+                    research_type=task.research_type.value,
+                    aggregation_config=task.data_aggregation_config.dict() if task.data_aggregation_config else None
+                )
+            
+            # Start the data aggregation workflow
+            asyncio.create_task(
+                global_research_orchestrator.execute_data_aggregation(
+                    task_id=task_id,
+                    config=task.data_aggregation_config.dict() if task.data_aggregation_config else {}
+                )
+            )
+            
+            # Get the complete task object to return to frontend
+            async with get_kb() as kb:
+                task_data = await kb.get_research_task(task_id)
+            
+            return {
+                "task_id": task_id,
+                "title": task.title,
+                "research_query": task.research_query,
+                "research_type": task.research_type.value,
+                "status": "pending",
+                "user_id": task.user_id,
+                "project_id": task.project_id,
+                "created_at": task_data.get('created_at', ''),
+                "message": "Data aggregation task started successfully"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create data aggregation task: {str(e)}")
     
     else:
         # This should not happen with the current ResearchType enum
@@ -568,6 +617,25 @@ async def get_research_report(task_id: str):
         if not report:
             raise HTTPException(status_code=404, detail="Report not found")
         return Response(content=report, media_type="text/plain")
+
+
+@app.get("/tasks/{task_id}/export/csv")
+async def export_aggregation_csv(task_id: str):
+    """Export data aggregation results as CSV."""
+    global global_csv_exporter
+    
+    # Validate CSV exporter is initialized
+    if not global_csv_exporter:
+        raise HTTPException(status_code=500, detail="CSV Exporter not initialized")
+    
+    try:
+        # Generate CSV export
+        csv_path = await global_csv_exporter.export(task_id)
+        
+        # Return CSV file
+        return FileResponse(csv_path, filename=f"{task_id}_data.csv")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export CSV: {str(e)}")
 
 
 # Project Management Endpoints

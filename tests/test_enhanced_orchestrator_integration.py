@@ -62,9 +62,16 @@ class TestEnhancedOrchestratorIntegration:
         )
         
         # Create DOKWorkflowOrchestrator
+        from src.database.dok_taxonomy_repository import DOKTaxonomyRepository
+        dok_repository = DOKTaxonomyRepository(test_knowledge_base)
         dok_workflow = DOKWorkflowOrchestrator(
-            llm_client=llm_client
+            llm_client=llm_client,
+            dok_repository=dok_repository
         )
+        
+        # Ensure DOK workflow orchestrator uses the same database connection
+        dok_workflow.dok_repository.knowledge_base = test_knowledge_base
+        dok_workflow.dok_repository._pool = test_knowledge_base.pool
         
         # Load LLM config
         import json
@@ -102,12 +109,17 @@ class TestEnhancedOrchestratorIntegration:
         # Use a specific research query that should yield good results
         research_query = "What are the latest breakthroughs in quantum computing hardware in 2024?"
         
-        # Execute research workflow
-        result = await enhanced_orchestrator.execute_analytical_research(
-            task_id=task_id,
+        # Create the research task in database first
+        task_id = await enhanced_orchestrator.db.create_research_task(
             research_query=research_query,
-            user_id=user_id,
-            max_iterations=2  # Limit iterations for test
+            research_type="Analytical Report",
+            user_id=user_id
+        )
+        
+        # Execute research workflow
+        result = await enhanced_orchestrator.execute_analytical_report(
+            task_id=task_id,
+            query=research_query
         )
         
         # Basic validation
@@ -212,9 +224,15 @@ class TestEnhancedOrchestratorIntegration:
     async def test_dok_database_persistence(self, enhanced_orchestrator, test_knowledge_base):
         """Test that DOK taxonomy data is properly persisted in the database."""
         # Create a task
-        task_id = str(uuid.uuid4())
         user_id = str(uuid.uuid4())
         research_query = "Test DOK persistence"
+        
+        # Create the research task in database first
+        task_id = await enhanced_orchestrator.db.create_research_task(
+            research_query=research_query,
+            research_type="Analytical Report",
+            user_id=user_id
+        )
         
         # Mock search results
         async def mock_search_agent_execute(*args, **kwargs):
@@ -235,11 +253,9 @@ class TestEnhancedOrchestratorIntegration:
                 if agent:
                     agent.execute = mock_search_agent_execute
         
-        result = await enhanced_orchestrator.execute_analytical_research(
+        result = await enhanced_orchestrator.execute_analytical_report(
             task_id=task_id,
-            research_query=research_query,
-            user_id=user_id,
-            max_iterations=1
+            query=research_query
         )
         
         assert result.status == ResearchStatus.COMPLETED
@@ -275,11 +291,9 @@ class TestEnhancedOrchestratorIntegration:
         research_query = ""  # Empty query should be handled gracefully
         
         # Execute workflow
-        result = await enhanced_orchestrator.execute_analytical_research(
+        result = await enhanced_orchestrator.execute_analytical_report(
             task_id=task_id,
-            research_query=research_query,
-            user_id=user_id,
-            max_iterations=1
+            query=research_query
         )
         
         # Should handle error gracefully
@@ -299,11 +313,16 @@ class TestEnhancedOrchestratorIntegration:
             user_id = str(uuid.uuid4())
             research_query = f"Quantum computing test query {i}"
             
-            task = enhanced_orchestrator.execute_analytical_research(
-                task_id=task_id,
+            # Create the research task in database first
+            task_id = await enhanced_orchestrator.db.create_research_task(
                 research_query=research_query,
-                user_id=user_id,
-                max_iterations=1
+                research_type="Analytical Report",
+                user_id=user_id
+            )
+            
+            task = enhanced_orchestrator.execute_analytical_report(
+                task_id=task_id,
+                query=research_query
             )
             tasks.append(task)
         

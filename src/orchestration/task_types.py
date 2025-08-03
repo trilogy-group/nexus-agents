@@ -18,7 +18,8 @@ class TaskType(Enum):
     ENTITY_EXTRACTION = "entity_extraction"
     DOK_CATEGORIZATION = "dok_categorization"
     SEARCH_SPACE_ENUM = "search_space_enum"
-    DATA_AGG_SEARCH = "data_agg_search"
+    DATA_AGGREGATION_SEARCH = "data_aggregation_search"
+    DATA_AGGREGATION_EXTRACT = "data_aggregation_extract"
     SEARCH = "search"
     REASONING = "reasoning"
 

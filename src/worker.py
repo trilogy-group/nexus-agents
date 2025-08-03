@@ -169,9 +169,16 @@ class ResearchWorker:
         llm_client = LLMClient()
         
         # Create DOK workflow orchestrator
+        from src.database.dok_taxonomy_repository import DOKTaxonomyRepository
+        dok_repository = DOKTaxonomyRepository(db)
         dok_workflow = DOKWorkflowOrchestrator(
-            llm_client=llm_client
+            llm_client=llm_client,
+            dok_repository=dok_repository
         )
+        
+        # Ensure DOK workflow orchestrator uses the same database connection
+        dok_workflow.dok_repository.knowledge_base = db
+        dok_workflow.dok_repository._pool = db.pool
         
         # Load LLM config
         llm_config_path = os.getenv("LLM_CONFIG", "config/llm_config.json")

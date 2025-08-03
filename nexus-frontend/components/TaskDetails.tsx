@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Clock, CheckCircle, XCircle, FileText, BarChart, AlertCircle, Trash2 } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, FileText, BarChart, AlertCircle, Trash2, Download } from 'lucide-react';
 import { api, ResearchTask } from '@/lib/api';
 import { useAppStore } from '@/lib/store';
 import { TaskTimeline } from './TaskTimeline';
@@ -102,7 +102,17 @@ export function TaskDetails({ taskId }: TaskDetailsProps) {
               </span>
             </div>
           </div>
-          <div>
+          <div className="flex space-x-2">
+            {task.research_type === 'data_aggregation' && task.status === 'completed' && (
+              <button
+                onClick={() => window.open(`/api/tasks/${taskId}/export/csv`, '_blank')}
+                className="inline-flex items-center px-3 py-2 border border-green-300 text-sm font-medium rounded-md text-green-700 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-gray-800 dark:border-green-600 dark:text-green-400 dark:hover:bg-green-900/20"
+                title="Download CSV Export"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Download CSV
+              </button>
+            )}
             <button
               onClick={handleDeleteTask}
               disabled={deleteTaskMutation.isPending}
