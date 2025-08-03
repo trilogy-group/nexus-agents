@@ -273,16 +273,19 @@ class DataAggregationOrchestrator:
             # 5. Collect extracted entities
             all_entities = await self._collect_extracted_entities(task_id)
             
-            # 6. Resolve entities
+            # 6. Enrich entities with attribute-specific searches
+            enriched_entities = await self._enrich_entity_attributes(task_id, all_entities, config["attributes"])
+            
+            # 7. Resolve entities
             resolved_entities = await self.entity_resolver.resolve_entities(
-                entities=all_entities,
+                entities=enriched_entities,
                 domain_hint=config.get("domain_hint")
             )
             
-            # 7. Store in database
+            # 8. Store in database
             await self._store_aggregation_results(task_id, resolved_entities, config.get("domain_hint"))
             
-            # 8. Generate CSV
+            # 9. Generate CSV
             csv_path = await self._generate_csv(task_id, resolved_entities)
             
             # Update task status to completed
@@ -496,6 +499,185 @@ class DataAggregationOrchestrator:
         except Exception as e:
             logger.error(f"Error collecting extracted entities for task {task_id}: {str(e)}")
             return []
+    
+    async def _enrich_entity_attributes(self, task_id: str, entities: List[Dict[str, Any]], attributes: List[str]) -> List[Dict[str, Any]]:
+        """
+        Enrich entities by searching for specific attributes of each entity.
+        
+        Args:
+            task_id: The research task identifier
+            entities: List of entities to enrich
+            attributes: List of attributes to search for
+            
+        Returns:
+            List of enriched entities with populated attributes
+        """
+        logger.info(f"Starting attribute enrichment for {len(entities)} entities with attributes: {attributes}")
+        
+        enrichment_tasks = []
+        
+        for i, entity in enumerate(entities):
+            entity_name = entity.get("name", "Unknown Entity")
+            
+            # Create search query for this entity's attributes
+            # Format: "Entity Name" attribute1 attribute2 attribute3
+            attribute_query = f'"{entity_name}" {" ".join(attributes)}'
+            
+            # Create enrichment task
+            task = Task(
+                id=f"enrich_{task_id}_{i}",
+                type="search",
+                payload={
+                    "query": attribute_query,
+                    "max_results": 5,  # Fewer results needed for attribute enrichment
+                    "task_id": task_id,
+                    "entity_name": entity_name,
+                    "target_attributes": attributes
+                }
+            )
+            enrichment_tasks.append(task)
+            logger.info(f"Created enrichment task for entity '{entity_name}' with query: {attribute_query}")
+        
+        # Submit enrichment tasks
+        if enrichment_tasks:
+            await self.task_coordinator.submit_tasks(enrichment_tasks)
+            logger.info(f"Submitted {len(enrichment_tasks)} enrichment tasks")
+            
+            # Wait for enrichment tasks to complete
+            await self._wait_for_search_tasks([task.id for task in enrichment_tasks])
+            
+            # Collect enrichment results and merge with entities
+            enriched_entities = await self._merge_enrichment_results(task_id, entities, attributes)
+            
+            logger.info(f"Completed attribute enrichment for {len(enriched_entities)} entities")
+            return enriched_entities
+        else:
+            logger.warning("No enrichment tasks created")
+            return entities
+    
+    async def _merge_enrichment_results(self, task_id: str, entities: List[Dict[str, Any]], attributes: List[str]) -> List[Dict[str, Any]]:
+        """
+        Merge enrichment search results back into entities.
+        
+        Args:
+            task_id: The research task identifier
+            entities: Original entities to enrich
+            attributes: List of attributes that were searched for
+            
+        Returns:
+            List of entities with enriched attributes
+        """
+        try:
+            # Get enrichment task results from Redis
+            pattern = f"{self.task_coordinator.TASK_STATUS_PREFIX}:enrich_{task_id}_*:result"
+            result_keys = await self.task_coordinator.redis_client.keys(pattern)
+            
+            logger.info(f"Found {len(result_keys)} enrichment result keys")
+            
+            # Create a map of entity index to enrichment results
+            enrichment_data = {}
+            
+            for result_key in result_keys:
+                # Extract entity index from key (enrich_taskid_INDEX)
+                key_parts = result_key.decode('utf-8').split(':')
+                task_part = key_parts[1]  # enrich_taskid_INDEX
+                entity_index = int(task_part.split('_')[-1])  # Get INDEX
+                
+                # Get the search results
+                result_data = await self.task_coordinator.redis_client.get(result_key)
+                if result_data:
+                    if isinstance(result_data, bytes):
+                        result_data = result_data.decode('utf-8')
+                    
+                    task_result = json.loads(result_data) if isinstance(result_data, str) else result_data
+                    
+                    if task_result and task_result.get("status") == "completed":
+                        enrichment_data[entity_index] = task_result.get("results", [])
+            
+            # Enrich each entity with its corresponding search results
+            enriched_entities = []
+            
+            for i, entity in enumerate(entities):
+                enriched_entity = entity.copy()
+                
+                # Get enrichment results for this entity
+                search_results = enrichment_data.get(i, [])
+                
+                if search_results:
+                    # Extract attributes from search results using LLM
+                    extracted_attributes = await self._extract_attributes_from_search(search_results, attributes, entity.get("name", "Unknown"))
+                    
+                    # Merge extracted attributes into entity
+                    if not enriched_entity.get("attributes"):
+                        enriched_entity["attributes"] = {}
+                    
+                    enriched_entity["attributes"].update(extracted_attributes)
+                
+                enriched_entities.append(enriched_entity)
+            
+            logger.info(f"Successfully merged enrichment results for {len(enriched_entities)} entities")
+            return enriched_entities
+            
+        except Exception as e:
+            logger.error(f"Error merging enrichment results: {str(e)}")
+            return entities  # Return original entities if enrichment fails
+    
+    async def _extract_attributes_from_search(self, search_results: List[Dict[str, Any]], target_attributes: List[str], entity_name: str) -> Dict[str, str]:
+        """
+        Extract specific attributes from search results using LLM.
+        
+        Args:
+            search_results: List of search result documents
+            target_attributes: List of attributes to extract
+            entity_name: Name of the entity being enriched
+            
+        Returns:
+            Dictionary of extracted attributes
+        """
+        try:
+            # Combine search results into a single text
+            combined_text = "\n\n".join([
+                f"Source: {result.get('title', 'Unknown')}\n{result.get('content', '')}"
+                for result in search_results[:3]  # Use top 3 results
+                if result.get('content')
+            ])
+            
+            if not combined_text.strip():
+                return {attr: "Unknown" for attr in target_attributes}
+            
+            # Create extraction prompt
+            prompt = f"""Extract the following attributes for "{entity_name}" from the provided search results.
+
+Target attributes: {', '.join(target_attributes)}
+
+Search results:
+{combined_text}
+
+For each attribute, provide the most accurate value found in the search results. If an attribute is not found, respond with "Unknown".
+
+Respond in JSON format:
+{{
+{', '.join([f'  "{attr}": "value or Unknown"' for attr in target_attributes])}
+}}"""
+            
+            # Use LLM to extract attributes
+            response = await self.llm_client.generate(prompt)
+            
+            # Parse JSON response
+            try:
+                extracted_data = json.loads(response)
+                # Ensure all target attributes are present
+                result = {}
+                for attr in target_attributes:
+                    result[attr] = extracted_data.get(attr, "Unknown")
+                return result
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse LLM response as JSON for entity {entity_name}")
+                return {attr: "Unknown" for attr in target_attributes}
+            
+        except Exception as e:
+            logger.error(f"Error extracting attributes for entity {entity_name}: {str(e)}")
+            return {attr: "Unknown" for attr in target_attributes}
     
     async def _wait_for_search_tasks(self, task_ids: List[str]) -> bool:
         """
