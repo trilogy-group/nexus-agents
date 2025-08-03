@@ -28,61 +28,119 @@ class PrivateSchoolsProcessor(DomainProcessor):
     
     async def extract_entities(self, 
                               content: str, 
-                              attributes: List[str],
-                              llm_client=None) -> List[Dict[str, Any]]:
+                              attributes: List[str]) -> List[Dict[str, Any]]:
         """Extract private school entities with requested attributes."""
         logger.info(f"Extracting private school entities with attributes: {attributes}")
         
         # Always try to extract NCES ID as it's the unique identifier
         enhanced_attributes = ["nces_id"] + [attr for attr in attributes if attr != "nces_id"]
         
+        # Use the LLM client to extract entities - check if it's available
+        if not hasattr(self, 'llm_client') or self.llm_client is None:
+            logger.warning("LLM client not available for private school extraction, using general extraction")
+            # Fallback to basic extraction without LLM
+            return self._extract_basic_entities(content, enhanced_attributes)
+        
         # Use specialized prompt for private school extraction
         prompt = f"""
-Extract private school information from the following content. Look for:
-- School name (official name)
-- NCES ID (format: XX-XXXXXXX)
-- Attributes: {', '.join(enhanced_attributes)}
+Extract private school information from the following content. Extract ANY school information found, even if incomplete.
 
-Common patterns:
-- Grades served: "K-12", "9-12", "PreK-8"
-- Enrollment: Look for "students" or "enrollment"
-- Tuition: Annual amount, may be range
+Look for:
+- School name (any name that could be a school)
+- Address (street address, city, state, zip)
+- Phone number
+- Website URL
+- Grades served (K-12, PreK-8, etc.)
+- Enrollment numbers
+- Tuition costs
+- NCES ID (format: XX-XXXXXXX, if available)
 
-Return as a JSON array with this structure:
+IMPORTANT: Extract information even if only partial data is available. Use "unknown" for missing required fields.
+
+Return ONLY a JSON array with this exact structure:
 [
   {{
-    "name": "School Name",
-    "nces_id": "XX-XXXXXXX",
+    "name": "School Name or unknown",
+    "nces_id": "XX-XXXXXXX or unknown",
     "attributes": {{
-      "address": "123 Main St, City, State",
-      "website": "https://school.edu",
-      "enrollment": "500",
-      "tuition": "$25,000",
-      ...
+      "address": "Full address or partial address or unknown",
+      "website": "URL or unknown",
+      "enrollment population": "Number or unknown",
+      "tuition cost": "Amount or unknown"
     }},
-    "confidence": 0.95
+    "confidence": 0.8
   }}
 ]
 
-Content:
+Content to analyze:
 {content}
 """
         
-        # If we have an LLM client, use it to extract entities
-        if llm_client:
-            try:
-                response = await llm_client.generate(prompt)
-                import json
-                entities = json.loads(response)
-                return entities
-            except Exception as e:
-                logger.error(f"Error extracting entities with LLM: {e}")
-                return []
-        else:
-            # For now, we'll return an empty list as we need an LLM client to process this
-            # In a real implementation, this would call an LLM to extract entities
-            logger.warning("PrivateSchoolsProcessor.extract_entities is not fully implemented - needs LLM integration")
-            return []
+        # Use the LLM client to extract entities
+        try:
+            response = await self.llm_client.generate(prompt)
+            logger.info(f"LLM response: {response[:200]}..." if len(response) > 200 else f"LLM response: {response}")
+            
+            if not response or not response.strip():
+                logger.warning("LLM returned empty response")
+                return self._extract_basic_entities(content, enhanced_attributes)
+            
+            import json
+            import re
+            
+            # Extract JSON from the response, handling explanatory text and code blocks
+            json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
+            if json_match:
+                cleaned_response = json_match.group(1).strip()
+            else:
+                # Try to find JSON array or object in the response
+                json_match = re.search(r'(\[[\s\S]*?\]|\{[\s\S]*?\})', response)
+                if json_match:
+                    cleaned_response = json_match.group(1).strip()
+                else:
+                    cleaned_response = response.strip()
+            
+            logger.info(f"Cleaned JSON: {cleaned_response}")
+            entities = json.loads(cleaned_response)
+            return entities
+        except Exception as e:
+            logger.error(f"Error extracting entities with LLM: {e}")
+            logger.error(f"Raw LLM response: {repr(response) if 'response' in locals() else 'No response'}")
+            # Fallback to basic extraction
+            return self._extract_basic_entities(content, enhanced_attributes)
+    
+    def _extract_basic_entities(self, content: str, attributes: List[str]) -> List[Dict[str, Any]]:
+        """Basic entity extraction without LLM."""
+        # Simple regex-based extraction for private schools
+        import re
+        
+        # Look for school names and basic info in the content
+        entities = []
+        
+        # Try to find school names with common patterns
+        lines = content.split('\n')
+        current_entity = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Look for school names (lines that might be school names)
+            if any(keyword in line.lower() for keyword in ['school', 'academy', 'institute', 'christian', 'montessori']):
+                if current_entity:
+                    entities.append(current_entity)
+                current_entity = {
+                    "name": line,
+                    "nces_id": "",
+                    "attributes": {},
+                    "confidence": 0.5
+                }
+        
+        if current_entity:
+            entities.append(current_entity)
+        
+        return entities
     
     async def resolve_entities(self, 
                               entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -156,4 +214,4 @@ Content:
     
     async def process(self, content: str, attributes: List[str], llm_client=None) -> List[Dict[str, Any]]:
         """Process content to extract private school entities."""
-        return await self.extract_entities(content, attributes, llm_client)
+        return await self.extract_entities(content, attributes)

@@ -32,13 +32,22 @@ class TestDataAggregationOrchestrator:
         repo.fetch_all = AsyncMock(return_value=[])
         repo.domain_registry = Mock()
         repo.domain_registry.get_processor = Mock(return_value=None)
+        repo.knowledge_base = Mock()
+        repo.knowledge_base.get_research_task = AsyncMock(return_value=None)
+        repo.knowledge_base.create_task = AsyncMock(return_value=None)
+        repo.knowledge_base.create_task_operation = AsyncMock(return_value=None)
+        repo.update_research_task_status = AsyncMock(return_value=None)
+        repo.get_search_results_for_task = AsyncMock(return_value=[])
+        repo.store_data_aggregation_result = AsyncMock(return_value=None)
         return repo
     
     @pytest.fixture
     def mock_task_coordinator(self):
         """Create a mock task coordinator."""
+        from src.orchestration.task_types import TaskResult, TaskStatus
         coordinator = Mock()
         coordinator.submit_tasks = AsyncMock(return_value=True)
+        coordinator.get_task_status = AsyncMock(return_value=TaskResult(task_id="test-task", status=TaskStatus.COMPLETED))
         return coordinator
     
     @pytest.fixture
@@ -46,7 +55,7 @@ class TestDataAggregationOrchestrator:
         """Create a data aggregation orchestrator with mock dependencies."""
         return DataAggregationOrchestrator(
             llm_client=mock_llm_client,
-            dok_repository=mock_dok_repository,
+            data_aggregation_repository=mock_dok_repository,
             task_coordinator=mock_task_coordinator
         )
     
@@ -308,7 +317,7 @@ class TestDataAggregationIntegration:
         # Set up the data aggregation orchestrator within the research orchestrator
         orchestrator.data_aggregation_orchestrator = DataAggregationOrchestrator(
             llm_client=mock_llm_client,
-            dok_repository=mock_dok_repository,
+            data_aggregation_repository=mock_dok_repository,
             task_coordinator=mock_task_coordinator
         )
         
@@ -338,3 +347,244 @@ class TestDataAggregationIntegration:
             assert "entity_count" in result
             assert "csv_path" in result
             assert result["entity_count"] == 5
+
+
+class TestDataAggregationRepository:
+    """Test data aggregation repository functionality."""
+    
+    @pytest.fixture
+    def mock_knowledge_base(self):
+        """Create a mock knowledge base."""
+        kb = Mock()
+        kb.execute_query = AsyncMock(return_value=True)
+        kb.fetch_all = AsyncMock(return_value=[])
+        kb.fetch_one = AsyncMock(return_value=None)
+        return kb
+    
+    @pytest.fixture
+    def data_aggregation_repository(self, mock_knowledge_base):
+        """Create a data aggregation repository with mock knowledge base."""
+        repo = DataAggregationRepository(mock_knowledge_base)
+        return repo
+    
+    @pytest.mark.asyncio
+    async def test_store_source_success(self, data_aggregation_repository, mock_knowledge_base):
+        """Test successful source storage with proper metadata."""
+        source_data = {
+            "source_id": "test-source-123",
+            "url": "https://example.com",
+            "title": "Test Source",
+            "description": "Test description",
+            "source_type": "web_search",
+            "provider": "test_provider",
+            "accessed_at": datetime.now(timezone.utc),
+            "metadata": {
+                "task_id": "test-task-123",
+                "search_query": "test query",
+                "content": "test content"
+            },
+            "content_hash": "test-hash",
+            "reliability_score": 0.8
+        }
+        
+        result = await data_aggregation_repository.store_source(source_data)
+        
+        # Verify the source was stored successfully
+        assert result is True
+        mock_knowledge_base.execute_query.assert_called_once()
+        
+        # Verify the metadata was properly serialized
+        call_args = mock_knowledge_base.execute_query.call_args[0]
+        metadata_json = call_args[8]  # metadata parameter
+        assert metadata_json is not None
+        assert isinstance(metadata_json, str)
+        
+        # Verify task_id is stored in metadata
+        metadata_dict = json.loads(metadata_json)
+        assert metadata_dict["task_id"] == "test-task-123"
+    
+    @pytest.mark.asyncio
+    async def test_get_search_results_for_task(self, data_aggregation_repository, mock_knowledge_base):
+        """Test retrieving search results for a specific task."""
+        task_id = "test-task-123"
+        
+        # Mock database response with proper metadata structure
+        mock_rows = [
+            {
+                "source_id": "source-1",
+                "url": "https://example1.com",
+                "title": "Example 1",
+                "description": "Description 1",
+                "provider": "provider1",
+                "metadata": json.dumps({
+                    "task_id": task_id,
+                    "search_query": "query 1",
+                    "content": "content 1"
+                }),
+                "accessed_at": datetime.now(timezone.utc)
+            },
+            {
+                "source_id": "source-2",
+                "url": "https://example2.com",
+                "title": "Example 2",
+                "description": "Description 2",
+                "provider": "provider2",
+                "metadata": json.dumps({
+                    "task_id": task_id,
+                    "search_query": "query 2",
+                    "content": "content 2"
+                }),
+                "accessed_at": datetime.now(timezone.utc)
+            }
+        ]
+        
+        mock_knowledge_base.fetch_all.return_value = [Mock(**row) for row in mock_rows]
+        
+        results = await data_aggregation_repository.get_search_results_for_task(task_id)
+        
+        # Verify results are retrieved and parsed correctly
+        assert len(results) == 2
+        for result in results:
+            assert "source_id" in result
+            assert "url" in result
+            assert "metadata" in result
+            # Verify metadata is parsed as dict
+            metadata = result["metadata"]
+            assert isinstance(metadata, dict)
+            assert metadata["task_id"] == task_id
+    
+    @pytest.mark.asyncio
+    async def test_store_data_aggregation_result(self, data_aggregation_repository, mock_knowledge_base):
+        """Test storing data aggregation results."""
+        task_id = "test-task-123"
+        entity_type = "private_school"
+        entity_data = {
+            "name": "Test School",
+            "attributes": {
+                "address": "123 Main St",
+                "website": "https://testschool.edu"
+            }
+        }
+        unique_identifier = "school-123"
+        search_context = {"location": "California", "query": "private schools"}
+        
+        result = await data_aggregation_repository.store_data_aggregation_result(
+            task_id, entity_type, entity_data, unique_identifier, search_context
+        )
+        
+        # Verify the result was stored successfully
+        assert result is True
+        mock_knowledge_base.execute_query.assert_called_once()
+        
+        # Verify JSON serialization
+        call_args = mock_knowledge_base.execute_query.call_args[0]
+        stored_entity_data = json.loads(call_args[3])  # entity_data parameter
+        stored_search_context = json.loads(call_args[5])  # search_context parameter
+        
+        assert stored_entity_data == entity_data
+        assert stored_search_context == search_context
+
+
+class TestDataAggregationRedisConsistency:
+    """Test Redis key consistency between task creation and status checking."""
+    
+    @pytest.fixture
+    def mock_redis_client(self):
+        """Create a mock Redis client."""
+        redis_client = Mock()
+        redis_client.pipeline = Mock(return_value=Mock())
+        redis_client.pipeline().lpush = Mock()
+        redis_client.pipeline().set = Mock()
+        redis_client.pipeline().execute = AsyncMock()
+        redis_client.get = AsyncMock()
+        redis_client.keys = AsyncMock(return_value=[])
+        return redis_client
+    
+    @pytest.fixture
+    def mock_rate_limiter(self):
+        """Create a mock rate limiter."""
+        rate_limiter = Mock()
+        rate_limiter.acquire_mcp = AsyncMock()
+        return rate_limiter
+    
+    @pytest.fixture
+    def task_coordinator(self, mock_redis_client, mock_rate_limiter):
+        """Create a task coordinator with mock dependencies."""
+        coordinator = ParallelTaskCoordinator(
+            redis_client=mock_redis_client,
+            rate_limiter=mock_rate_limiter
+        )
+        return coordinator
+    
+    def test_search_task_id_generation_consistency(self, task_coordinator):
+        """Test that search task IDs are generated consistently."""
+        from src.orchestration.task_types import Task, TaskType
+        
+        task_id = "parent-task-123"
+        subspace_id = "subspace-456"
+        
+        # Create search task as data aggregation orchestrator would
+        search_task = Task(
+            id=f"search_{task_id}_{subspace_id}",
+            type=TaskType.DATA_AGGREGATION_SEARCH,
+            payload={
+                "query": "test query",
+                "task_id": task_id,
+                "subspace": {"id": subspace_id}
+            }
+        )
+        
+        # Verify task ID format
+        expected_task_id = f"search_{task_id}_{subspace_id}"
+        assert search_task.id == expected_task_id
+        
+        # Verify payload contains correct task_id reference
+        assert search_task.payload["task_id"] == task_id
+    
+    @pytest.mark.asyncio
+    async def test_task_status_key_consistency(self, task_coordinator, mock_redis_client):
+        """Test Redis key consistency between task submission and status checking."""
+        from src.orchestration.task_types import Task, TaskType, TaskStatus, TaskResult
+        
+        task_id = "test-search-task-123"
+        task = Task(
+            id=task_id,
+            type=TaskType.DATA_AGGREGATION_SEARCH,
+            payload={"query": "test query"}
+        )
+        
+        # Submit task
+        await task_coordinator.submit_tasks([task])
+        
+        # Verify Redis keys used during submission
+        pipeline_calls = mock_redis_client.pipeline.return_value.set.call_args_list
+        status_key_call = pipeline_calls[0][0][0]  # First set call should be status key
+        data_key_call = pipeline_calls[1][0][0]   # Second set call should be data key
+        
+        expected_status_key = f"nexus:task:{task_id}:status"
+        expected_data_key = f"nexus:task:{task_id}:data"
+        
+        assert status_key_call == expected_status_key
+        assert data_key_call == expected_data_key
+        
+        # Test status retrieval uses same key pattern
+        mock_redis_client.pipeline.reset_mock()
+        mock_redis_client.pipeline().get = Mock()
+        mock_redis_client.pipeline().execute = AsyncMock(return_value=[TaskStatus.COMPLETED.value, "{}", None])
+        
+        result = await task_coordinator.get_task_status(task_id)
+        
+        # Verify the same key patterns are used for retrieval
+        get_calls = mock_redis_client.pipeline.return_value.get.call_args_list
+        status_key_get = get_calls[0][0][0]
+        result_key_get = get_calls[1][0][0]
+        error_key_get = get_calls[2][0][0]
+        
+        assert status_key_get == expected_status_key
+        assert result_key_get == f"nexus:task:{task_id}:result"
+        assert error_key_get == f"nexus:task:{task_id}:error"
+        
+        # Verify result structure
+        assert isinstance(result, TaskResult)
+        assert result.task_id == task_id
+        assert result.status == TaskStatus.COMPLETED

@@ -37,16 +37,30 @@ class EntityResolver:
         # Check for domain-specific resolver
         processor = None
         if domain_hint:
-            processor = self.domain_registry.get_processor(domain_hint)
+            processor = self.domain_registry.get_processor_by_hint(domain_hint)
             
+        resolved_entities = []
         if processor and hasattr(processor, 'resolve_entities'):
             # Use domain-specific resolution
             logger.info(f"Using domain-specific resolver for {domain_hint}")
-            return await processor.resolve_entities(entities)
+            resolved_entities = await processor.resolve_entities(entities)
         else:
             # Use general-purpose resolution
             logger.info("Using general-purpose entity resolution")
-            return await self._general_resolution(entities)
+            resolved_entities = await self._general_resolution(entities)
+        
+        # Add unique identifiers to resolved entities if a domain processor is available
+        if domain_hint and resolved_entities:
+            processor = self.domain_registry.get_processor_by_hint(domain_hint)
+            if processor:
+                unique_id_field = processor.get_unique_identifier_field()
+                if unique_id_field:
+                    for entity in resolved_entities:
+                        if "attributes" in entity:
+                            unique_identifier = entity["attributes"].get(unique_id_field)
+                            entity["unique_identifier"] = unique_identifier
+        
+        return resolved_entities
             
     async def _general_resolution(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

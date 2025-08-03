@@ -65,10 +65,13 @@ export const api = {
       apiClient.get(`/tasks/${taskId}/timeline`),
     
     getReport: (taskId: string) => 
-      apiClient.get(`/tasks/${taskId}/report`, { responseType: 'text' }),
+      apiClient.get(`/tasks/${taskId}/report`),
     
     delete: (taskId: string) => 
       apiClient.delete(`/tasks/${taskId}`),
+    
+    exportCSV: (taskId: string) => 
+      apiClient.get(`/tasks/${taskId}/export/csv`, { responseType: 'blob' }),
   },
 };
 

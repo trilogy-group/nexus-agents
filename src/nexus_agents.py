@@ -104,7 +104,9 @@ class NexusAgents:
         await self.mcp_client.initialize()
         
         # Register domain processors
-        register_processor(PrivateSchoolsProcessor(), "education.private_schools")
+        private_schools_processor = PrivateSchoolsProcessor()
+        private_schools_processor.llm_client = self.llm_client
+        register_processor(private_schools_processor, "education.private_schools")
         print("Registered domain processors")
         
         # Create and start the agents

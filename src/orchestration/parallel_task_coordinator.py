@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from typing import List, Dict, Any, Optional, Set
 from datetime import datetime, timezone
 import logging
@@ -33,6 +34,18 @@ class ParallelTaskCoordinator:
         self.worker_pool_size = worker_pool_size
         self.active_workers: Set[asyncio.Task] = set()
         self._shutdown = False
+        self.data_aggregation_repository = None
+        self.dok_repository = None
+        logger.info("ParallelTaskCoordinator initialized with Redis client and rate limiter")
+    
+    def _get_queue_key(self, priority: int) -> str:
+        """Get Redis key for priority queue."""
+        priority_map = {
+            0: "low_priority",
+            1: "normal_priority", 
+            2: "high_priority"
+        }
+        return f"{self.TASK_QUEUE_PREFIX}:{priority_map.get(priority, 'normal_priority')}"
     
     async def submit_tasks(self, tasks: List[Task], priority: int = 0):
         """Submit tasks to Redis queue with priority."""
@@ -58,9 +71,15 @@ class ParallelTaskCoordinator:
             # Store full task data
             data_key = f"{self.TASK_STATUS_PREFIX}:{task.id}:data"
             pipeline.set(data_key, task_json, ex=3600)
+            
+            # Log the exact Redis keys being used for debugging
+            logger.debug(f"Task {task.id}: queue_key={queue_key}, status_key={status_key}, data_key={data_key}")
         
         await pipeline.execute()
         logger.info(f"Submitted {len(tasks)} tasks to queue")
+        # Log task IDs for verification
+        task_ids = [task.id for task in tasks]
+        logger.info(f"Submitted task IDs: {task_ids}")
     
     async def process_tasks(self):
         """Process tasks from queue respecting rate limits."""
@@ -115,6 +134,11 @@ class ParallelTaskCoordinator:
         result_key = f"{self.TASK_STATUS_PREFIX}:{task_id}:result"
         error_key = f"{self.TASK_STATUS_PREFIX}:{task_id}:error"
         
+        logger.debug(f"Checking Redis keys for task {task_id}:")
+        logger.debug(f"  Status key: {status_key}")
+        logger.debug(f"  Result key: {result_key}")
+        logger.debug(f"  Error key: {error_key}")
+        
         # Get all data in pipeline
         pipeline = self.redis_client.pipeline()
         pipeline.get(status_key)
@@ -123,12 +147,28 @@ class ParallelTaskCoordinator:
         
         status, result, error = await pipeline.execute()
         
+        # Log what we found for debugging
+        logger.debug(f"Task status check for {task_id}: status={status}, result={result is not None}, error={error}")
+        
         if not status:
+            logger.debug(f"No status found for task {task_id} - returning None")
             return None
         
+        # Decode status if it's bytes
+        status_value = status.decode() if isinstance(status, bytes) else status
+        logger.debug(f"Task {task_id} status value: {status_value}")
+        
+        # Handle invalid status values gracefully
+        try:
+            task_status = TaskStatus(status_value)
+        except ValueError:
+            logger.warning(f"Invalid task status value '{status_value}' for task {task_id}, defaulting to PENDING")
+            task_status = TaskStatus.PENDING
+        
+        logger.debug(f"Task {task_id} parsed status: {task_status}")
         return TaskResult(
             task_id=task_id,
-            status=TaskStatus(status.decode() if isinstance(status, bytes) else status),
+            status=task_status,
             result=json.loads(result) if result else None,
             error=error.decode() if error and isinstance(error, bytes) else error
         )
@@ -174,23 +214,31 @@ class ParallelTaskCoordinator:
     async def _process_task(self, task: Task, worker_id: int):
         """Process a single task with rate limiting."""
         logger.info(f"Worker {worker_id} processing task {task.id} (type: {task.type})")
+        logger.info(f"Task payload: {task.payload}")
         
         try:
             # Update task status
             await self._update_task_status(task.id, TaskStatus.PROCESSING)
             task.started_at = datetime.now(timezone.utc)
             
-            # Apply rate limiting based on task type
-            if task.type in [TaskType.SUMMARIZATION, TaskType.DOK_CATEGORIZATION, 
-                           TaskType.ENTITY_EXTRACTION, TaskType.REASONING]:
+            llm_task_types = [TaskType.SUMMARIZATION, TaskType.DOK_CATEGORIZATION, 
+                             TaskType.ENTITY_EXTRACTION, TaskType.REASONING]
+            search_task_types = [TaskType.SEARCH, TaskType.DATA_AGGREGATION_SEARCH]
+            
+            # Handle both enum and string task types
+            task_type_str = task.type if isinstance(task.type, str) else task.type.value
+            
+            if (task.type in llm_task_types or 
+                task_type_str in [t.value for t in llm_task_types]):
                 # LLM rate limiting
                 await self.rate_limiter.acquire_llm(task.model_type)
-            elif task.type in [TaskType.SEARCH, TaskType.DATA_AGG_SEARCH]:
+            elif (task.type in search_task_types or 
+                  task_type_str in [t.value for t in search_task_types]):
                 # MCP rate limiting
                 provider = task.payload.get("provider", "default")
                 await self.rate_limiter.acquire_mcp(provider)
             
-            # Simulate task processing (will be replaced with actual processing)
+            # Execute the actual task
             result = await self._execute_task(task)
             
             # Update task with result
@@ -201,6 +249,20 @@ class ParallelTaskCoordinator:
             # Store result
             await self._store_task_result(task.id, result)
             await self._update_task_status(task.id, TaskStatus.COMPLETED)
+            
+            # Check for data aggregation search tasks (handle both string and enum values)
+            is_data_aggregation_task = (
+                task.type == TaskType.DATA_AGGREGATION_SEARCH or 
+                task.type == TaskType.DATA_AGGREGATION_SEARCH.value or
+                (isinstance(task.type, str) and task.type == "data_aggregation_search")
+            )
+            
+            if is_data_aggregation_task:
+                if self.data_aggregation_repository is None:
+                    logger.error(f"Data aggregation repository is None for task {task.id} - cannot store results!")
+                    return  # Skip storage if repository is not available
+                await self._store_data_aggregation_search_result(task, result)
+            
             
             logger.info(f"Worker {worker_id} completed task {task.id}")
             
@@ -224,11 +286,12 @@ class ParallelTaskCoordinator:
     async def _execute_task(self, task: Task) -> Dict[str, Any]:
         """Execute the actual task."""
         try:
-            if task.type == TaskType.DATA_AGGREGATION_SEARCH:
-                # Handle data aggregation search tasks with higher result limit
+            # Handle both string and enum task types
+            task_type_str = task.type if isinstance(task.type, str) else task.type.value
+            
+            if task_type_str == "data_aggregation_search" or task.type == TaskType.DATA_AGGREGATION_SEARCH:
                 return await self._execute_data_aggregation_search(task)
-            elif task.type == TaskType.DATA_AGGREGATION_EXTRACT:
-                # Handle data aggregation extraction tasks
+            elif task_type_str == "data_aggregation_extract" or task.type == TaskType.DATA_AGGREGATION_EXTRACT:
                 return await self._execute_data_aggregation_extract(task)
             else:
                 # For other task types, simulate processing time
@@ -236,44 +299,69 @@ class ParallelTaskCoordinator:
                 
                 return {
                     "status": "completed",
-                    "task_type": task.type.value,
+                    "task_type": task.type,
                     "processed_at": datetime.now(timezone.utc).isoformat()
                 }
         except Exception as e:
             logger.error(f"Task execution failed: {e}", exc_info=True)
             return {
                 "status": "failed",
-                "task_type": task.type.value,
+                "task_type": task.type if isinstance(task.type, str) else task.type.value,
                 "error": str(e),
                 "processed_at": datetime.now(timezone.utc).isoformat()
             }
     
     async def _execute_data_aggregation_search(self, task: Task) -> Dict[str, Any]:
         """Execute data aggregation search task with high result limit."""
+        
         # Import here to avoid circular dependencies
         from ..mcp_client import MCPClient, MCPSearchClient
         from ..config.search_providers import SearchProvidersConfig
         
         try:
-            # Initialize MCP search client
-            mcp_client = MCPClient()
-            mcp_search_client = MCPSearchClient(mcp_client)
-            
             # Get query from task payload
             query = task.payload.get("query", "")
             if not query:
                 raise ValueError("Missing query in task payload")
             
-            # Execute search with very high result limit for data aggregation
-            results = await mcp_search_client.search_web(query, max_results=500000)
+            logger.info(f"🔍 Starting data aggregation search for query: {query}")
             
-            logger.info(f"Data aggregation search completed for task {task.id}: {len(results)} results")
+            # Initialize MCP search client
+            mcp_client = MCPClient()
+            search_client = MCPSearchClient(mcp_client)
             
+            # Initialize the search client to ensure connections are ready
+            await search_client.initialize()
+            
+            # Use the unified search_web method which handles result processing properly
+            all_results = await search_client.search_web(query, max_results=20)
+            
+            # If no results found, try a more general search approach
+            if not all_results:
+                fallback_queries = [
+                    query,
+                    f"list of {query}",
+                    f"find {query}",
+                    f"search {query}"
+                ]
+                
+                for fallback_query in fallback_queries:
+                    try:
+                        fallback_results = await search_client.search_web(fallback_query, max_results=10)
+                        if fallback_results:
+                            all_results.extend(fallback_results)
+                            break
+                    except Exception as fallback_error:
+                        logger.warning(f"Fallback search failed for '{fallback_query}': {fallback_error}")
+                        continue
+            
+            logger.info(f"Search completed for task {task.id}: {len(all_results)} results")
             return {
-                "status": "completed",
-                "task_type": task.type.value,
-                "results": results,
+                "status": "completed" if all_results else "no_results",
+                "task_type": task.type if isinstance(task.type, str) else task.type.value,
+                "results": all_results,
                 "query": query,
+                "providers_used": [result.get('provider', 'unknown') for result in all_results],
                 "processed_at": datetime.now(timezone.utc).isoformat()
             }
             
@@ -286,6 +374,7 @@ class ParallelTaskCoordinator:
         # Import here to avoid circular dependencies
         from ..agents.aggregation.entity_extractor import EntityExtractor
         from ..domain_processors.registry import get_global_registry
+        from ..llm import LLMClient
         
         try:
             # Get content and parameters from task payload
@@ -297,18 +386,28 @@ class ParallelTaskCoordinator:
             if not content:
                 raise ValueError("Missing content in task payload")
             
-            # Initialize entity extractor
-            domain_registry = get_global_registry()
-            entity_extractor = EntityExtractor(domain_registry)
+            # Initialize entity extractor with LLM client
+            llm_client = LLMClient()
+            entity_extractor = EntityExtractor(llm_client)
+            
+            # Initialize domain processors with LLM client if domain hint is provided
+            if domain_hint:
+                domain_registry = get_global_registry()
+                processor = domain_registry.get_processor_by_hint(domain_hint)
+                if processor and hasattr(processor, 'llm_client'):
+                    processor.llm_client = llm_client
             
             # Extract entities
             entities = await entity_extractor.extract(content, entity_type, attributes, domain_hint)
             
             logger.info(f"Entity extraction completed for task {task.id}: {len(entities)} entities")
             
+            # Log the extracted entities for debugging
+            logger.debug(f"Extracted entities for task {task.id}: {entities}")
+            
             return {
                 "status": "completed",
-                "task_type": task.type.value,
+                "task_type": task.type if isinstance(task.type, str) else task.type.value,
                 "entities": entities,
                 "processed_at": datetime.now(timezone.utc).isoformat()
             }
@@ -321,6 +420,7 @@ class ParallelTaskCoordinator:
         """Update task status in Redis."""
         status_key = f"{self.TASK_STATUS_PREFIX}:{task_id}:status"
         await self.redis_client.set(status_key, status.value, ex=3600)
+        logger.debug(f"Updated task status for {task_id}: {status.value}")
     
     async def _store_task_result(self, task_id: str, result: Dict[str, Any]):
         """Store task result in Redis."""
@@ -341,11 +441,93 @@ class ParallelTaskCoordinator:
                 return False
         return True
     
-    def _get_queue_key(self, priority: int) -> str:
-        """Get Redis key for priority queue."""
-        priority_map = {
-            0: "low_priority",
-            1: "normal_priority",
-            2: "high_priority"
-        }
-        return f"{self.TASK_QUEUE_PREFIX}:{priority_map.get(priority, 'normal_priority')}"
+    async def _store_data_aggregation_search_result(self, task: Task, result: Dict[str, Any]):
+        """Store data aggregation search result in database."""
+        try:
+            # For data aggregation search tasks, we just need to store the search results
+            # The data aggregation orchestrator will collect them and process entities
+            search_results = result.get("results", [])
+            stored_count = 0
+            
+            # Check if data_aggregation_repository is available
+            if self.data_aggregation_repository is None:
+                logger.error(f"Data aggregation repository is None for task {task.id}")
+                raise ValueError("Data aggregation repository not initialized")
+            
+            # If no search results, return early
+            if not search_results:
+                return
+            
+            # Store each search result in the database using the knowledge base
+            for i, search_result in enumerate(search_results):
+                # Extract content from result - try multiple field names
+                content = (
+                    search_result.get('content') or 
+                    search_result.get('text') or 
+                    search_result.get('description') or 
+                    search_result.get('snippet') or 
+                    search_result.get('body') or 
+                    ""
+                )
+                
+                if content and content.strip():
+                    # Create unique source ID - use the parent task_id for consistency
+                    source_id = f"{task.payload.get('task_id', 'unknown')}_search_{task.id}_{i}"
+                    
+                    # Extract title with multiple fallbacks
+                    raw_title = (
+                        search_result.get('title') or 
+                        search_result.get('name') or 
+                        search_result.get('headline') or 
+                        f"Search Result {i+1}"
+                    )
+                    
+                    # Truncate title to prevent database VARCHAR limit errors
+                    truncated_title = raw_title[:254] if len(raw_title) > 254 else raw_title
+                    
+                    # Get the parent task ID - this is crucial for later retrieval
+                    parent_task_id = task.payload.get("task_id", "")
+                    if not parent_task_id:
+                        logger.error(f"No parent task_id found in task payload for task {task.id}")
+                        logger.error(f"Task payload: {task.payload}")
+                        continue  # Skip this result if we don't have a parent task ID
+                    
+                    # Log the metadata being stored for debugging
+                    metadata_to_store = {
+                        "task_id": parent_task_id,
+                        "search_query": task.payload.get("query", ""),
+                        "search_subspace": task.payload.get("subspace", {}),
+                        "content": content,
+                        "search_metadata": search_result.get('metadata', {})
+                    }
+                    
+                    # Ensure search_subspace is JSON serializable
+                    if not isinstance(metadata_to_store["search_subspace"], (str, int, float, bool, type(None))):
+                        try:
+                            metadata_to_store["search_subspace"] = json.dumps(metadata_to_store["search_subspace"])
+                        except (TypeError, ValueError):
+                            metadata_to_store["search_subspace"] = str(metadata_to_store["search_subspace"])
+                    
+                    logger.info(f"Storing result {i} for parent_task_id={parent_task_id}")
+                    
+                    # Store source in database with proper metadata structure
+                    await self.data_aggregation_repository.store_source({
+                        "source_id": source_id,
+                        "url": search_result.get('url', ''),
+                        "title": truncated_title,
+                        "description": content[:500] if content else '',
+                        "source_type": "web_search",
+                        "provider": search_result.get('provider', search_result.get('tool', 'unknown')),
+                        "metadata": metadata_to_store
+                    })
+                    
+                    stored_count += 1
+            
+            if stored_count > 0:
+                logger.info(f"Stored {stored_count} search results for task {task.id}")
+            
+        except Exception as e:
+            logger.error(f"Error storing data aggregation search result for task {task.id}: {str(e)}")
+            logger.error(f"Task payload: {task.payload}")
+            logger.error(f"Result data: {result}")
+            raise  # Re-raise the exception so it's properly handled

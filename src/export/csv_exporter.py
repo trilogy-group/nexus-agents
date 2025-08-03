@@ -6,7 +6,7 @@ import io
 import csv
 from typing import List, Dict, Any
 
-from src.database.dok_taxonomy_repository import DOKTaxonomyRepository
+from src.database.data_aggregation_repository import DataAggregationRepository
 
 
 logger = logging.getLogger(__name__)
@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 class CSVExporter:
     """Export aggregation results to CSV."""
     
-    def __init__(self, dok_repository: DOKTaxonomyRepository):
+    def __init__(self, data_aggregation_repository: DataAggregationRepository):
         """Initialize the CSV exporter."""
-        self.dok_repository = dok_repository
+        self.data_aggregation_repository = data_aggregation_repository
     
     async def export(self, task_id: str) -> str:
         """
@@ -118,15 +118,8 @@ class CSVExporter:
         Returns:
             List of aggregation results
         """
-        query = """
-            SELECT * FROM data_aggregation_results
-            WHERE task_id = $1
-            ORDER BY created_at DESC
-        """
-        
         try:
-            rows = await self.dok_repository.fetch_all(query, task_id)
-            return [dict(row) for row in rows]
+            return await self.data_aggregation_repository.get_data_aggregation_results(task_id)
         except Exception as e:
             logger.error(f"Error fetching aggregation results for task {task_id}: {str(e)}")
             return []

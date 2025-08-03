@@ -119,6 +119,202 @@ function renderTopicDecomposition(outputData: any) {
   );
 }
 
+// Render data aggregation search space enumeration data
+function renderSearchSpaceEnumeration(outputData: any) {
+  const subspaces = outputData.subspaces || [];
+  const baseQuery = outputData.base_query || '';
+  const searchSpace = outputData.search_space || '';
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-medium text-gray-700">Search Space Enumeration</h4>
+        <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+          {subspaces.length} subspaces
+        </span>
+      </div>
+      
+      <div className="mb-4 p-3 bg-gray-50 rounded border">
+        <div className="text-xs font-medium text-gray-600 mb-1">Base Query</div>
+        <div className="text-xs text-gray-800">{baseQuery}</div>
+      </div>
+      
+      <div className="mb-4 p-3 bg-gray-50 rounded border">
+        <div className="text-xs font-medium text-gray-600 mb-1">Search Space</div>
+        <div className="text-xs text-gray-800">{searchSpace}</div>
+      </div>
+      
+      <div className="grid gap-3">
+        {subspaces.map((subspace: any, idx: number) => (
+          <div key={idx} className="border border-gray-200 rounded-lg p-4 bg-white">
+            <div className="flex items-start justify-between mb-2">
+              <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                Subspace {idx + 1}
+              </span>
+              <span className="text-xs text-gray-500">
+                #{idx + 1}
+              </span>
+            </div>
+            
+            <div className="space-y-2">
+              <div>
+                <div className="text-xs font-medium text-gray-600">Query</div>
+                <div className="text-xs text-gray-800 bg-gray-50 px-3 py-2 rounded">
+                  {subspace.query}
+                </div>
+              </div>
+              
+              {subspace.metadata && (
+                <div>
+                  <div className="text-xs font-medium text-gray-600">Metadata</div>
+                  <pre className="text-xs text-gray-600 whitespace-pre-wrap overflow-auto max-h-32 bg-white p-3 rounded border">
+                    {JSON.stringify(subspace.metadata, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Render data aggregation entity extraction data
+function renderEntityExtraction(outputData: any) {
+  const entities = outputData.entities || [];
+  const entityType = outputData.entity_type || 'Unknown';
+  const attributes = outputData.attributes || [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-medium text-gray-700">Entity Extraction</h4>
+        <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
+          {entities.length} entities
+        </span>
+      </div>
+      
+      <div className="mb-4 p-3 bg-gray-50 rounded border">
+        <div className="text-xs font-medium text-gray-600 mb-1">Entity Type</div>
+        <div className="text-xs text-gray-800">{entityType}</div>
+      </div>
+      
+      {attributes.length > 0 && (
+        <div className="mb-4 p-3 bg-gray-50 rounded border">
+          <div className="text-xs font-medium text-gray-600 mb-1">Attributes to Extract</div>
+          <div className="flex flex-wrap gap-1">
+            {attributes.map((attr: string, idx: number) => (
+              <span key={idx} className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                {attr}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {entities.length > 0 && (
+        <div>
+          <h5 className="text-xs font-medium text-gray-600 mb-2">Extracted Entities</h5>
+          <div className="space-y-3">
+            {entities.map((entity: any, idx: number) => (
+              <div key={idx} className="border border-green-200 rounded-lg p-3 bg-green-50">
+                <div className="text-xs font-medium text-gray-800 mb-2">{entity.name}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(entity.attributes || {}).map(([key, value]: [string, any]) => (
+                    <div key={key} className="text-xs">
+                      <span className="font-medium text-gray-700">{key}:</span>
+                      <span className="text-gray-600 ml-1">{String(value)}</span>
+                    </div>
+                  ))}
+                </div>
+                {entity.confidence && (
+                  <div className="mt-2">
+                    <span className="text-xs text-green-700 bg-green-100 px-2 py-0.5 rounded">
+                      Confidence: {entity.confidence}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Render data aggregation entity resolution data
+function renderEntityResolution(outputData: any) {
+  const resolvedEntities = outputData.resolved_entities || [];
+  const unresolvedEntities = outputData.unresolved_entities || [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-medium text-gray-700">Entity Resolution</h4>
+        <div className="flex gap-2">
+          <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
+            {resolvedEntities.length} resolved
+          </span>
+          {unresolvedEntities.length > 0 && (
+            <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">
+              {unresolvedEntities.length} unresolved
+            </span>
+          )}
+        </div>
+      </div>
+      
+      {resolvedEntities.length > 0 && (
+        <div>
+          <h5 className="text-xs font-medium text-gray-600 mb-2">Resolved Entities</h5>
+          <div className="space-y-3">
+            {resolvedEntities.map((entity: any, idx: number) => (
+              <div key={idx} className="border border-green-200 rounded-lg p-3 bg-green-50">
+                <div className="text-xs font-medium text-gray-800 mb-2">{entity.name}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(entity.attributes || {}).map(([key, value]: [string, any]) => (
+                    <div key={key} className="text-xs">
+                      <span className="font-medium text-gray-700">{key}:</span>
+                      <span className="text-gray-600 ml-1">{String(value)}</span>
+                    </div>
+                  ))}
+                </div>
+                {entity.unique_identifier && (
+                  <div className="mt-2 text-xs text-gray-600">
+                    Unique ID: {entity.unique_identifier}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {unresolvedEntities.length > 0 && (
+        <div>
+          <h5 className="text-xs font-medium text-gray-600 mb-2">Unresolved Entities</h5>
+          <div className="space-y-3">
+            {unresolvedEntities.map((entity: any, idx: number) => (
+              <div key={idx} className="border border-yellow-200 rounded-lg p-3 bg-yellow-50">
+                <div className="text-xs font-medium text-gray-800 mb-2">{entity.name}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(entity.attributes || {}).map(([key, value]: [string, any]) => (
+                    <div key={key} className="text-xs">
+                      <span className="font-medium text-gray-700">{key}:</span>
+                      <span className="text-gray-600 ml-1">{String(value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Render research plan data
 function renderResearchPlan(outputData: any) {
   const plan = outputData.plan || {};
@@ -652,7 +848,10 @@ export function TaskTimeline({ taskId }: TaskTimelineProps) {
                   {op.operation_type === 'search_summary' && renderSearchSummary(op.output_data)}
                   {op.operation_type === 'reasoning_analysis' && renderReasoningAnalysis(op.output_data)}
                   {op.operation_type === 'dok_taxonomy' && renderDokTaxonomy(op.output_data)}
-                  {!['topic_decomposition', 'research_plan', 'mcp_search', 'search_summary', 'reasoning_analysis', 'dok_taxonomy'].includes(op.operation_type) && (
+                  {op.operation_type === 'data_aggregation_search_space' && renderSearchSpaceEnumeration(op.output_data)}
+                  {op.operation_type === 'data_aggregation_entity_extraction' && renderEntityExtraction(op.output_data)}
+                  {op.operation_type === 'data_aggregation_entity_resolution' && renderEntityResolution(op.output_data)}
+                  {!['topic_decomposition', 'research_plan', 'mcp_search', 'search_summary', 'reasoning_analysis', 'dok_taxonomy', 'data_aggregation_search_space', 'data_aggregation_entity_extraction', 'data_aggregation_entity_resolution'].includes(op.operation_type) && (
                     <>
                       <div className="text-sm font-medium text-gray-700 mb-2">Operation Details:</div>
                       <pre className="text-xs text-gray-600 whitespace-pre-wrap overflow-auto max-h-64 bg-white p-3 rounded border">

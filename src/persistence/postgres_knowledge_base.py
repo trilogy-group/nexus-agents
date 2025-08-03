@@ -744,6 +744,16 @@ class PostgresKnowledgeBase:
     async def get_research_report(self, task_id: str) -> Optional[str]:
         """Get research report markdown content."""
         async with self.pool.acquire() as conn:
+            # First check if this is a data aggregation task
+            task_row = await conn.fetchrow(
+                "SELECT research_type FROM research_tasks WHERE task_id = $1",
+                task_id
+            )
+            
+            if task_row and task_row['research_type'] == 'data_aggregation':
+                # For data aggregation tasks, return a special marker
+                return "[DATA_AGGREGATION_TASK]"
+            
             row = await conn.fetchrow(
                 "SELECT report_markdown FROM research_reports WHERE task_id = $1",
                 task_id
@@ -753,6 +763,39 @@ class PostgresKnowledgeBase:
                 return row['report_markdown']
             
             return None
+    
+    async def get_data_aggregation_results(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get data aggregation results for a task."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM data_aggregation_results 
+                WHERE task_id = $1 
+                ORDER BY created_at DESC
+                """,
+                task_id
+            )
+            
+            results = []
+            for row in rows:
+                result = dict(row)
+                # Parse JSON fields
+                if isinstance(result.get('entity_data'), str):
+                    try:
+                        result['entity_data'] = json.loads(result['entity_data'])
+                    except json.JSONDecodeError:
+                        result['entity_data'] = {}
+                
+                if isinstance(result.get('search_context'), str):
+                    try:
+                        result['search_context'] = json.loads(result['search_context'])
+                    except json.JSONDecodeError:
+                        result['search_context'] = {}
+                
+                results.append(result)
+            
+            return results
+    
     
     async def delete_research_task(self, task_id: str) -> bool:
         """

@@ -4,14 +4,18 @@ from abc import ABC, abstractmethod
 from typing import Any, List, Dict, Optional
 
 from ..orchestration.task_types import Task
+from ..llm import LLMClient
 
 
 class DomainProcessor(ABC):
     """Base class for domain-specific processors."""
     
+    def __init__(self):
+        self.llm_client: Optional[LLMClient] = None
+    
     @abstractmethod
-    def matches_domain(self, query: str) -> bool:
-        """Check if this processor handles the query."""
+    def matches_domain(self, hint: str) -> bool:
+        """Check if this processor matches the given domain hint."""
         pass
     
     @abstractmethod

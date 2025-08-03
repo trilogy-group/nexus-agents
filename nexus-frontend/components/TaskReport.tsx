@@ -25,17 +25,12 @@ export function TaskReport({ taskId, taskStatus }: TaskReportProps) {
     },
   });
 
-  // Fetch task report only for analytical report tasks
-  const { data: report, isLoading: reportLoading } = useQuery({
+  // Fetch task report or entities based on research type
+  const { data: reportData, isLoading: reportLoading, error: reportError } = useQuery({
     queryKey: ['task-report', taskId],
     queryFn: async () => {
-      // Check if this is a data aggregation task
-      if (taskDetails && taskDetails.research_type === 'data_aggregation') {
-        return null;
-      }
-      
       const response = await api.tasks.getReport(taskId);
-      return response.data as string;
+      return response.data;
     },
     enabled: taskStatus === 'completed',
   });
@@ -52,9 +47,40 @@ export function TaskReport({ taskId, taskStatus }: TaskReportProps) {
     );
   }
 
-  if (!report && taskStatus === 'completed') {
-    // Check if this is a data aggregation task
-    if (taskDetails && taskDetails.research_type === 'data_aggregation') {
+  if (reportError) {
+    return (
+      <div className="text-center py-8">
+        <div className="text-red-500 mb-2">Error loading report data</div>
+        <div className="text-sm text-gray-400">
+          {(reportError as Error).message}
+        </div>
+      </div>
+    );
+  }
+
+  // Check if this is a data aggregation task
+  const isDataAggregationTask = taskDetails && taskDetails.research_type === 'data_aggregation';
+  
+  // Handle different response formats
+  let report: string | null = null;
+  let entities: any[] | null = null;
+  
+  if (isDataAggregationTask) {
+    // For data aggregation tasks, expect JSON with entities array
+    entities = (reportData as { entities: any[] })?.entities || [];
+  } else {
+    // For analytical report tasks, handle both string and object responses
+    if (typeof reportData === 'string') {
+      report = reportData;
+    } else if (reportData && typeof reportData === 'object' && 'data' in reportData) {
+      report = (reportData as any).data;
+    } else {
+      report = reportData as string;
+    }
+  }
+
+  if (!reportData && taskStatus === 'completed') {
+    if (isDataAggregationTask) {
       return (
         <div className="text-center py-8">
           <div className="text-gray-500 mb-2">Data Aggregation Task</div>
@@ -82,7 +108,7 @@ export function TaskReport({ taskId, taskStatus }: TaskReportProps) {
     );
   }
 
-  if (!report && taskStatus !== 'completed') {
+  if (!reportData && taskStatus !== 'completed') {
     return (
       <div className="text-center py-8">
         <div className="text-gray-500 mb-2">Report not yet available</div>
@@ -102,6 +128,86 @@ export function TaskReport({ taskId, taskStatus }: TaskReportProps) {
     );
   }
 
+  // For data aggregation tasks, display entities in a table format
+  if (isDataAggregationTask && entities) {
+    // Extract all unique attribute keys from entities
+    const allAttributeKeys = Array.from(
+      new Set(entities.flatMap(entity => Object.keys(entity.entity_data?.attributes || {})))
+    ).sort();
+    
+    return (
+      <div className="w-full overflow-hidden min-w-0">
+        {/* Report Header */}
+        <div className="mb-6 pb-4 border-b border-gray-200">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h2 className="text-lg font-semibold text-gray-900 break-all">Extracted Entities</h2>
+            <div className="flex items-center space-x-2 flex-wrap">
+              <span className="text-sm text-gray-500">
+                {entities.length} entities extracted
+              </span>
+              <button
+                onClick={async () => {
+                  try {
+                    const response = await api.tasks.exportCSV(taskId);
+                    const url = window.URL.createObjectURL(new Blob([response.data]));
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.setAttribute('download', `${taskId}_data.csv`);
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    window.URL.revokeObjectURL(url);
+                  } catch (error) {
+                    console.error('Error downloading CSV:', error);
+                  }
+                }}
+                className="inline-flex items-center px-3 py-1 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Download CSV
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Entities Table */}
+        <div className="w-full overflow-x-auto min-w-0">
+          <table className="w-full border-collapse border border-gray-300">
+            <thead>
+              <tr>
+                <th className="border border-gray-300 px-4 py-2 bg-gray-100 font-semibold text-left">Name</th>
+                <th className="border border-gray-300 px-4 py-2 bg-gray-100 font-semibold text-left">Unique Identifier</th>
+                {allAttributeKeys.map(key => (
+                  <th key={key} className="border border-gray-300 px-4 py-2 bg-gray-100 font-semibold text-left">
+                    {key}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {entities.map((entity, index) => (
+                <tr key={index}>
+                  <td className="border border-gray-300 px-4 py-2">
+                    {entity.entity_data?.name || 'Unknown'}
+                  </td>
+                  <td className="border border-gray-300 px-4 py-2">
+                    {entity.unique_identifier || ''}
+                  </td>
+                  {allAttributeKeys.map(key => (
+                    <td key={key} className="border border-gray-300 px-4 py-2">
+                      {entity.entity_data?.attributes?.[key] || ''}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  // For analytical report tasks, display markdown report
   return (
     <div className="w-full overflow-hidden min-w-0" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
       {/* Report Header */}

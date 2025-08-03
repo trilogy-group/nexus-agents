@@ -40,16 +40,33 @@ class EntityExtractor:
         # Check for domain-specific processor
         processor = None
         if domain_hint:
-            processor = self.domain_registry.get_processor(domain_hint)
+            processor = self.domain_registry.get_processor_by_hint(domain_hint)
+            # Set the LLM client for the processor if it has that attribute
+            if processor and hasattr(processor, 'llm_client'):
+                processor.llm_client = self.llm_client
             
+        entities = []
         if processor:
             # Use domain-specific extraction
             logger.info(f"Using domain-specific processor for {domain_hint}")
-            return await processor.extract_entities(content, attributes, llm_client=self.llm_client)
+            entities = await processor.extract_entities(content, attributes)
         else:
             # Use general-purpose extraction
             logger.info("Using general-purpose entity extraction")
-            return await self._general_extraction(content, entity_type, attributes)
+            entities = await self._general_extraction(content, entity_type, attributes)
+        
+        # Add unique identifiers to entities if a domain processor is available
+        if domain_hint and entities:
+            processor = self.domain_registry.get_processor_by_hint(domain_hint)
+            if processor:
+                unique_id_field = processor.get_unique_identifier_field()
+                if unique_id_field:
+                    for entity in entities:
+                        if "attributes" in entity:
+                            unique_identifier = entity["attributes"].get(unique_id_field)
+                            entity["unique_identifier"] = unique_identifier
+        
+        return entities
             
     async def _general_extraction(self, 
                                  content: str, 

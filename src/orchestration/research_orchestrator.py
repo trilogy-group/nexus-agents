@@ -80,11 +80,29 @@ class ResearchOrchestrator:
         self._init_mcp_search_client()
         
         # Initialize data aggregation orchestrator
+        # Check if task coordinator already has a data aggregation repository assigned by worker
+        if self.task_coordinator and self.task_coordinator.data_aggregation_repository is not None:
+            # Use the repository assigned by the worker
+            self.data_aggregation_repository = self.task_coordinator.data_aggregation_repository
+            logger.info("Using data aggregation repository assigned by worker")
+        else:
+            # Create our own repository if none exists
+            from src.database.data_aggregation_repository import DataAggregationRepository
+            self.data_aggregation_repository = DataAggregationRepository(self.db)
+            # Assign it to the task coordinator
+            if self.task_coordinator:
+                self.task_coordinator.data_aggregation_repository = self.data_aggregation_repository
+                logger.info("Research orchestrator assigned data aggregation repository to task coordinator")
+        
         self.data_aggregation_orchestrator = DataAggregationOrchestrator(
             llm_client=self.dok_workflow.llm_client,
-            dok_repository=self.dok_workflow.dok_repository,
+            data_aggregation_repository=self.data_aggregation_repository,
             task_coordinator=self.task_coordinator
         )
+        
+        # Ensure the data_aggregation_repository has access to the knowledge base
+        if hasattr(self.data_aggregation_repository, 'knowledge_base') and self.data_aggregation_repository.knowledge_base is None:
+            self.data_aggregation_repository.knowledge_base = self.db
     
     def _init_mcp_search_client(self):
         """Initialize MCP search client with available providers."""
