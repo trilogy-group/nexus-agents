@@ -193,16 +193,22 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# Output directory
+# Output directories
 output/
+exports/
+research-report*.md
+
+# Development plans
+plans/
 
 # Redis dump
 dump.rdb
 
-# MongoDB data
+# data
 data/
 
 # External MCP Servers (managed by setup script)
+scripts/external_mcp_servers/*/
 external_mcp_servers/*/
 
 # External MCP Server Virtual Environments

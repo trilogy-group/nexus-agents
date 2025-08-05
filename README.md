@@ -127,13 +127,27 @@ This architecture enables stable multi-agent concurrent operations with proper d
 
 ## 🚀 Features
 
+### Core Research Capabilities
 - **Multi-Provider LLM Support**: OpenAI, Anthropic, Google, xAI, OpenRouter, Ollama
 - **Proper MCP Implementation**: Official MCP servers for external tool access
 - **Continuous Research**: Persistent agents that evolve knowledge over time
 - **Hierarchical Processing**: Tree-of-thoughts approach to complex queries
 - **Human-in-the-Loop**: Interactive refinement and feedback mechanisms
 - **Scalable Architecture**: Horizontal scaling and resilient error handling
+
+### Advanced Knowledge Management
+- **DOK Taxonomy Integration**: Webb's Depth of Knowledge framework with 4-level taxonomy
+  - DOK 1-2: Knowledge Tree with facts and source summaries
+  - DOK 3: Cross-referenced insights and analysis
+  - DOK 4: Spiky POVs (controversial truths/myths) with evidence backing
+- **Source Provenance Tracking**: Complete lineage from sources to insights
+- **Comprehensive Error Handling**: All workflow failures are surfaced with detailed error messages
+
+### Data Processing & Export
 - **Data Aggregation Research**: Structured data collection and synthesis with CSV export
+- **Attribute Enrichment**: LLM-powered entity attribute extraction and enhancement
+- **Multiple Export Formats**: CSV, JSON, BrainLift-compatible knowledge graphs
+- **Real-time Progress Tracking**: Live updates on research task status
 
 ## 📦 Installation
 
@@ -412,6 +426,49 @@ curl -X GET http://localhost:12000/tasks/{task_id}/export/csv \
   -O -J
 ```
 
+## 🧠 DOK Taxonomy System
+
+The system implements Webb's Depth of Knowledge (DOK) taxonomy to structure research findings into a hierarchical knowledge framework:
+
+### DOK Levels
+
+**DOK Level 1-2: Knowledge Tree**
+- Factual information and source summaries
+- Categorized by topic with subcategories
+- Direct source attribution and relevance scoring
+- Accessible via `/api/dok/{task_id}/knowledge-tree`
+
+**DOK Level 3: Insights**
+- Cross-referenced analysis and synthesis
+- Pattern recognition across multiple sources
+- Confidence scoring for reliability assessment
+- Accessible via `/api/dok/{task_id}/insights`
+
+**DOK Level 4: Spiky POVs**
+- Controversial or contrarian viewpoints
+- "Truths" and "Myths" with supporting evidence
+- Links back to supporting insights and sources
+- Accessible via `/api/dok/{task_id}/spiky-povs`
+
+### Usage
+
+**Web Interface:**
+1. Complete any research task (analytical or data aggregation)
+2. Navigate to the task details page
+3. Click "View DOK Taxonomy" to explore the knowledge structure
+4. Export to BrainLift format for external knowledge management
+
+**API Access:**
+```bash
+# Get complete DOK taxonomy data
+curl -X GET http://localhost:12000/api/dok/{task_id}/complete
+
+# Get specific components
+curl -X GET http://localhost:12000/api/dok/{task_id}/knowledge-tree
+curl -X GET http://localhost:12000/api/dok/{task_id}/insights
+curl -X GET http://localhost:12000/api/dok/{task_id}/spiky-povs
+```
+
 ## 🔍 Search Providers
 
 The system integrates with multiple search providers through the Model Context Protocol (MCP):
@@ -425,11 +482,19 @@ All providers are automatically configured and managed by the system.
 
 ## 📊 Data Storage
 
-The system uses **DuckDB** for lightweight, JSON-native data storage:
-- Research tasks and status tracking
-- Search results and analysis
-- Generated artifacts and reports
-- No external database setup required
+The system uses **PostgreSQL** for production-grade data storage with full ACID compliance:
+
+### Core Tables
+- **Research Tasks**: Task lifecycle, configuration, and status tracking
+- **DOK Taxonomy**: Knowledge trees, insights, spiky POVs with full relationships
+- **Data Aggregation**: Entity extraction results and attribute enrichment
+- **Source Management**: URL tracking, summaries, and provenance
+
+### Key Features
+- **JSONB Support**: Flexible schema for evolving data structures
+- **Connection Pooling**: 5-20 persistent connections for optimal performance
+- **Full Concurrency**: Multi-agent operations with proper isolation
+- **Automatic Migrations**: Schema updates handled automatically
 
 ### File Storage
 
@@ -447,7 +512,7 @@ The system supports continuous research modes:
 3. **Continuous Monitoring**: Ongoing information updates
 4. **Living Documents**: Auto-updating research artifacts
 
-## 🛠️ Development
+## 🔧️ Development
 
 ### Development Scripts
 
