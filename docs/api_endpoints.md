@@ -478,3 +478,271 @@ Check the health status of the API and its dependencies.
   "redis": "connected | disconnected | unhealthy",
   "postgresql": "connected | disconnected | unhealthy"
 }
+```
+
+## Project Data Aggregation
+
+### Get Project Entities
+**GET** `/api/projects/{project_id}/entities`
+
+Get all consolidated entities for a project.
+
+#### Response
+```json
+[
+  {
+    "project_id": "string",
+    "name": "string",
+    "unique_identifier": "string",
+    "entity_type": "string",
+    "consolidated_attributes": {
+      "attribute1": "value1",
+      "attribute2": "value2"
+    },
+    "source_tasks": ["task_id1", "task_id2"],
+    "confidence_score": 0.95,
+    "data_lineage": {
+      "attribute1": {
+        "sources": [
+          {
+            "task_id": "task_id1",
+            "confidence_score": 0.9,
+            "timestamp": "2023-01-01T00:00:00Z"
+          }
+        ],
+        "last_updated": "2023-01-01T00:00:00Z"
+      },
+      "attribute2": {
+        "sources": [
+          {
+            "task_id": "task_id2",
+            "confidence_score": 0.85,
+            "timestamp": "2023-01-01T00:00:00Z"
+          }
+        ],
+        "last_updated": "2023-01-01T00:00:00Z"
+      },
+      "metadata": {
+        "consolidation_timestamp": "2023-01-01T00:00:00Z",
+        "source_tasks": ["task_id1", "task_id2"],
+        "average_confidence": 0.875
+      }
+    },
+    "created_at": "datetime",
+    "updated_at": "datetime"
+  }
+]
+```
+
+### Get Project Entity
+**GET** `/api/projects/{project_id}/entities/{unique_identifier}`
+
+Get a specific consolidated entity for a project.
+
+#### Response
+```json
+{
+  "project_id": "string",
+  "name": "string",
+  "unique_identifier": "string",
+  "entity_type": "string",
+  "consolidated_attributes": {
+    "attribute1": "value1",
+    "attribute2": "value2"
+  },
+  "source_tasks": ["task_id1", "task_id2"],
+  "confidence_score": 0.95,
+  "data_lineage": {
+    "attribute1": {
+      "sources": [
+        {
+          "task_id": "task_id1",
+          "confidence_score": 0.9,
+          "timestamp": "2023-01-01T00:00:00Z"
+        }
+      ],
+      "last_updated": "2023-01-01T00:00:00Z"
+    },
+    "attribute2": {
+      "sources": [
+        {
+          "task_id": "task_id2",
+          "confidence_score": 0.85,
+          "timestamp": "2023-01-01T00:00:00Z"
+        }
+      ],
+      "last_updated": "2023-01-01T00:00:00Z"
+    },
+    "metadata": {
+      "consolidation_timestamp": "2023-01-01T00:00:00Z",
+      "source_tasks": ["task_id1", "task_id2"],
+      "average_confidence": 0.875
+    }
+  },
+  "created_at": "datetime",
+  "updated_at": "datetime"
+}
+```
+
+### Get Project DOK Taxonomy
+**GET** `/api/projects/{project_id}/dok`
+
+Get consolidated DOK taxonomy data for a project.
+
+#### Response
+```json
+{
+  "project_id": "string",
+  "knowledge_tree": [...],
+  "insights": [...],
+  "spiky_povs": {...},
+  "consolidated_bibliography": {...},
+  "source_tasks": ["task_id1", "task_id2"],
+  "created_at": "datetime",
+  "updated_at": "datetime"
+}
+```
+
+### Get Project Entity Lineage
+**GET** `/api/projects/{project_id}/lineage/{unique_identifier}`
+
+Get data lineage information for a specific project entity.
+
+#### Response
+```json
+{
+  "attribute1": {
+    "sources": [
+      {
+        "task_id": "task_id1",
+        "confidence_score": 0.9,
+        "timestamp": "2023-01-01T00:00:00Z"
+      }
+    ],
+    "last_updated": "2023-01-01T00:00:00Z"
+  },
+  "attribute2": {
+    "sources": [
+      {
+        "task_id": "task_id2",
+        "confidence_score": 0.85,
+        "timestamp": "2023-01-01T00:00:00Z"
+      }
+    ],
+    "last_updated": "2023-01-01T00:00:00Z"
+  },
+  "metadata": {
+    "consolidation_timestamp": "2023-01-01T00:00:00Z",
+    "source_tasks": ["task_id1", "task_id2"],
+    "average_confidence": 0.875
+  }
+}
+```
+
+### Trigger Project Entity Consolidation
+**POST** `/api/projects/{project_id}/consolidate`
+
+Trigger project-level entity consolidation for all tasks in a project.
+
+#### Response
+```json
+{
+  "message": "Project entity consolidation completed successfully",
+  "entities_processed": 1085,
+  "consolidation_timestamp": "2023-01-01T00:00:00Z"
+}
+```
+
+#### Error Responses
+- **404 Not Found**: Project not found
+- **500 Internal Server Error**: Consolidation failed
+
+### Export Project Entities CSV
+**GET** `/api/projects/{project_id}/export/csv`
+
+Export project consolidated entities as CSV file.
+
+#### Response
+- **Content-Type**: `text/csv`
+- **Content-Disposition**: `attachment; filename="project_{project_id}_entities.csv"`
+
+CSV file containing:
+- Entity metadata (name, type, unique_identifier)
+- Consolidated attributes (flattened)
+- Source tasks and confidence scores
+- Data lineage information
+- Timestamps
+
+#### Error Responses
+- **404 Not Found**: Project not found or no entities available
+- **500 Internal Server Error**: CSV generation failed
+
+### Get Project Knowledge Graph
+**GET** `/projects/{project_id}/knowledge`
+
+Get project knowledge graph data.
+
+#### Response
+```json
+{
+  "project_id": "string",
+  "knowledge_data": {
+    "nodes": [
+      {
+        "id": "string",
+        "label": "string",
+        "type": "string",
+        "attributes": {}
+      }
+    ],
+    "edges": [
+      {
+        "source": "string",
+        "target": "string",
+        "relationship": "string",
+        "weight": 0.95
+      }
+    ]
+  },
+  "created_at": "datetime",
+  "updated_at": "datetime"
+}
+```
+
+### Update Project Knowledge Graph
+**PUT** `/projects/{project_id}/knowledge`
+
+Update project knowledge graph data.
+
+#### Request Body
+```json
+{
+  "knowledge_data": {
+    "nodes": [
+      {
+        "id": "string",
+        "label": "string",
+        "type": "string",
+        "attributes": {}
+      }
+    ],
+    "edges": [
+      {
+        "source": "string",
+        "target": "string",
+        "relationship": "string",
+        "weight": 0.95
+      }
+    ]
+  }
+}
+```
+
+#### Response
+```json
+{
+  "message": "Project knowledge graph updated successfully",
+  "project_id": "string",
+  "updated_at": "datetime"
+}
+```

@@ -8,10 +8,11 @@ integrated with the existing PostgresKnowledgeBase system.
 import asyncio
 import asyncpg
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 from contextlib import asynccontextmanager
 
-from src.persistence.postgres_knowledge_base import PostgresKnowledgeBase
+if TYPE_CHECKING:
+    from src.persistence.postgres_knowledge_base import PostgresKnowledgeBase
 
 
 logger = logging.getLogger(__name__)
@@ -20,9 +21,12 @@ logger = logging.getLogger(__name__)
 class BaseRepository:
     """Base repository class providing common database operations."""
     
-    def __init__(self, knowledge_base: Optional[PostgresKnowledgeBase] = None):
+    def __init__(self, knowledge_base: Optional["PostgresKnowledgeBase"] = None):
         """Initialize base repository with PostgreSQL knowledge base."""
-        self.knowledge_base = knowledge_base or PostgresKnowledgeBase()
+        if knowledge_base is None:
+            from src.persistence.postgres_knowledge_base import PostgresKnowledgeBase
+            knowledge_base = PostgresKnowledgeBase()
+        self.knowledge_base = knowledge_base
         self._pool = None
     
     async def ensure_connection(self):

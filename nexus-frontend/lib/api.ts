@@ -41,6 +41,9 @@ export const api = {
     
     updateKnowledgeGraph: (projectId: string, data: any) => 
       apiClient.put(`/projects/${projectId}/knowledge`, data),
+    
+    getProjectEntities: (projectId: string) => 
+      apiClient.get(`/projects/${projectId}/entities`),
   },
   
   // Tasks

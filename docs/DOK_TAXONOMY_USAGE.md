@@ -152,6 +152,17 @@ Returns comprehensive bibliography with source usage tracking.
 #### GET `/api/dok/tasks/{task_id}/dok-complete`
 Returns complete DOK taxonomy data for a research task (all levels).
 
+### Project-Level DOK Taxonomy Endpoints
+
+#### GET `/api/projects/{project_id}/entities`
+Returns all consolidated entities for a project with their data lineage information.
+
+#### GET `/api/projects/{project_id}/entities/{unique_identifier}`
+Returns a specific consolidated entity for a project with its data lineage information.
+
+#### GET `/api/projects/{project_id}/dok`
+Returns consolidated DOK taxonomy data for a project.
+
 ## Research Workflow Integration
 
 ### Enhanced Workflow Steps

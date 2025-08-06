@@ -207,6 +207,39 @@ erDiagram
         TIMESTAMPTZ updated_at
     }
 
+    projects {
+        VARCHAR id PK
+        VARCHAR name
+        TEXT description
+        VARCHAR user_id
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    project_entities {
+        VARCHAR project_id PK FK
+        VARCHAR name
+        VARCHAR unique_identifier PK
+        VARCHAR entity_type
+        JSONB consolidated_attributes
+        JSONB source_tasks
+        FLOAT confidence_score
+        JSONB data_lineage
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    project_dok_taxonomy {
+        VARCHAR project_id PK FK
+        JSONB knowledge_tree
+        JSONB insights
+        JSONB spiky_povs
+        JSONB consolidated_bibliography
+        JSONB source_tasks
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
     %% Relationships
     research_tasks ||--|| research_reports : "has final report"
     research_tasks ||--o{ research_subtasks : "decomposed into"
@@ -237,6 +270,10 @@ erDiagram
     task_operations ||--o{ operation_evidence : "produces"
     task_operations ||--o{ operation_dependencies : "depends on"
     task_operations ||--o{ operation_dependencies : "depended by"
+    
+    projects ||--o{ project_entities : "consolidates entities"
+    projects ||--o{ project_dok_taxonomy : "consolidates DOK data"
+    projects ||--o{ research_tasks : "contains tasks"
 ```
 
 ## Table Descriptions
@@ -283,6 +320,37 @@ erDiagram
 - `unique_identifier`: External identifier for deduplication (e.g., NCES_ID for schools)
 - `search_context`: Location, subspace, and query context for the entity
 - Supports CSV export and cross-task entity consolidation
+
+### Project-Level Data Consolidation
+
+**projects**
+- Represents a research project that can contain multiple research tasks
+- `name`: Project name
+- `description`: Project description
+- `user_id`: User who created the project
+- Enables grouping and consolidation of research across multiple tasks
+
+**project_entities**
+- Stores consolidated entities from multiple research tasks within a project
+- `project_id`: Reference to the project
+- `name`: Entity name
+- `unique_identifier`: Unique identifier for the entity
+- `entity_type`: Type of entity
+- `consolidated_attributes`: Merged attributes from all source tasks
+- `source_tasks`: List of task IDs that contributed data to this entity
+- `confidence_score`: Overall confidence score for the consolidated entity
+- `data_lineage`: Detailed tracking of attribute sources and confidence scores
+- Enables cross-task entity consolidation and data lineage tracking
+
+**project_dok_taxonomy**
+- Stores consolidated DOK taxonomy data from multiple research tasks within a project
+- `project_id`: Reference to the project
+- `knowledge_tree`: Consolidated knowledge tree from all source tasks
+- `insights`: Consolidated insights from all source tasks
+- `spiky_povs`: Consolidated spiky POVs from all source tasks
+- `consolidated_bibliography`: Consolidated bibliography from all source tasks
+- `source_tasks`: List of task IDs that contributed data to this consolidation
+- Enables cross-task DOK taxonomy consolidation
 
 ### DOK Taxonomy System
 

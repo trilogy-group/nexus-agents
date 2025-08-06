@@ -88,7 +88,7 @@ export function TaskReport({ taskId, taskStatus }: TaskReportProps) {
             This task type generates structured data exports instead of analytical reports.
           </div>
           <button
-            onClick={() => window.open(`/api/tasks/${taskId}/export/csv`, '_blank')}
+            onClick={() => window.open(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:12000'}/tasks/${taskId}/export/csv`, '_blank')}
             className="inline-flex items-center px-4 py-2 border border-green-300 text-sm font-medium rounded-md text-green-700 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
           >
             <Download className="w-4 h-4 mr-2" />

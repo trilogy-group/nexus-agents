@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.database.project_data_repository import ProjectDataRepository
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -1091,3 +1093,15 @@ class PostgresKnowledgeBase:
         except Exception as e:
             logger.error(f"Failed to update knowledge graph for project {project_id}: {e}")
             return False
+    
+    async def get_project_entities(self, project_id: str) -> List[Dict[str, Any]]:
+        """Get all consolidated entities for a project."""
+        try:
+            project_repo = ProjectDataRepository()
+            await project_repo.connect()
+            entities = await project_repo.get_project_entities(project_id)
+            await project_repo.disconnect()
+            return entities
+        except Exception as e:
+            logger.error(f"Failed to get entities for project {project_id}: {e}")
+            return []

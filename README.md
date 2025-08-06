@@ -143,6 +143,14 @@ This architecture enables stable multi-agent concurrent operations with proper d
 - **Source Provenance Tracking**: Complete lineage from sources to insights
 - **Comprehensive Error Handling**: All workflow failures are surfaced with detailed error messages
 
+### Project-Level Knowledge Base
+- **Project Organization**: Multi-project workspace with hierarchical task management
+- **Cross-Task Entity Consolidation**: Automatic deduplication and merging of entities across research tasks
+- **Project Knowledge Graphs**: Shared knowledge repositories with version control (WIP)
+- **Consolidated Entity Management**: Unified view of all entities within a project scope
+- **Project-Level CSV Export**: Export consolidated entities with data lineage and confidence scores
+- **Data Provenance Tracking**: Complete audit trail from source tasks to consolidated entities
+
 ### Data Processing & Export
 - **Data Aggregation Research**: Structured data collection and synthesis with CSV export
 - **Attribute Enrichment**: LLM-powered entity attribute extraction and enhancement
@@ -469,6 +477,95 @@ curl -X GET http://localhost:12000/api/dok/{task_id}/insights
 curl -X GET http://localhost:12000/api/dok/{task_id}/spiky-povs
 ```
 
+## 🏗️ Project-Level Knowledge Base
+
+The system provides comprehensive project-level knowledge management that consolidates research across multiple tasks:
+
+### Core Capabilities
+
+**Project Organization**
+- Multi-project workspace with hierarchical task management
+- Project-scoped research tasks and knowledge isolation
+- Centralized project metadata and configuration
+- User-based project access control
+
+**Entity Consolidation**
+- Automatic deduplication of entities across all project tasks
+- Fuzzy matching algorithms for intelligent entity merging
+- Confidence scoring for consolidated attributes
+- Complete data lineage tracking from source to consolidated entity
+
+**Knowledge Graph Management**
+- Project-level shared knowledge repositories
+- Version-controlled knowledge graph updates
+- Cross-task relationship mapping
+- Persistent knowledge storage with full provenance
+
+### API Endpoints
+
+**Project Management:**
+```bash
+# Create a new project
+curl -X POST http://localhost:12000/projects \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Research Project", "description": "Project description"}'
+
+# List all projects
+curl -X GET http://localhost:12000/projects
+
+# Get project details
+curl -X GET http://localhost:12000/projects/{project_id}
+
+# Update project
+curl -X PUT http://localhost:12000/projects/{project_id} \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Updated Name", "description": "Updated description"}'
+```
+
+**Entity Consolidation:**
+```bash
+# Trigger project-level entity consolidation
+curl -X POST http://localhost:12000/api/projects/{project_id}/consolidate
+
+# Get consolidated entities for a project
+curl -X GET http://localhost:12000/projects/{project_id}/entities
+
+# Export consolidated entities as CSV
+curl -X GET http://localhost:12000/api/projects/{project_id}/export/csv
+
+# Get specific entity details
+curl -X GET http://localhost:12000/api/projects/{project_id}/entities/{unique_identifier}
+```
+
+**Knowledge Graph Operations:**
+```bash
+# Get project knowledge graph
+curl -X GET http://localhost:12000/projects/{project_id}/knowledge
+
+# Update project knowledge graph
+curl -X PUT http://localhost:12000/projects/{project_id}/knowledge \
+  -H "Content-Type: application/json" \
+  -d '{"knowledge_data": {"nodes": [], "edges": []}}'
+```
+
+### Usage Workflow
+
+1. **Create Project**: Set up a new research project with name and description
+2. **Add Research Tasks**: Create multiple research tasks within the project scope
+3. **Run Data Aggregation**: Execute data aggregation tasks to collect entities
+4. **Trigger Consolidation**: Manually consolidate entities across all project tasks
+5. **Export Results**: Download consolidated entities as CSV with full data lineage
+6. **Manage Knowledge**: Update and maintain project-level knowledge graphs
+
+### Data Structure
+
+Consolidated entities include:
+- **Entity Metadata**: Name, type, unique identifier, confidence score
+- **Consolidated Attributes**: Merged attributes from all source tasks with conflict resolution
+- **Source Tasks**: Complete list of originating research tasks
+- **Data Lineage**: Full audit trail from source extraction to final consolidation
+- **Timestamps**: Creation and update tracking for version control
+
 ## 🔍 Search Providers
 
 The system integrates with multiple search providers through the Model Context Protocol (MCP):
@@ -489,6 +586,9 @@ The system uses **PostgreSQL** for production-grade data storage with full ACID 
 - **DOK Taxonomy**: Knowledge trees, insights, spiky POVs with full relationships
 - **Data Aggregation**: Entity extraction results and attribute enrichment
 - **Source Management**: URL tracking, summaries, and provenance
+- **Projects**: Project organization with metadata and user association
+- **Project Knowledge Graphs**: Shared knowledge repositories with version control
+- **Project Entities**: Consolidated entities with data lineage and confidence scoring
 
 ### Key Features
 - **JSONB Support**: Flexible schema for evolving data structures

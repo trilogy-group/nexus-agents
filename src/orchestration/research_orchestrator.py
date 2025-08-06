@@ -24,6 +24,7 @@ from ..agents.research.dok_workflow_orchestrator import DOKWorkflowOrchestrator
 from ..persistence.postgres_knowledge_base import PostgresKnowledgeBase
 from ..domain_processors.registry import get_global_registry
 from ..orchestration.data_aggregation_orchestrator import DataAggregationOrchestrator
+from ..services.project_data_aggregator import ProjectDataAggregator
 from ..config.search_providers import SearchProvidersConfig
 from ..mcp_client import MCPClient, MCPSearchClient
 from ..mcp_tool_selector import MCPToolSelector
@@ -98,6 +99,14 @@ class ResearchOrchestrator:
             llm_client=self.dok_workflow.llm_client,
             data_aggregation_repository=self.data_aggregation_repository,
             task_coordinator=self.task_coordinator
+        )
+        
+        # Initialize project data aggregator for cross-task entity consolidation
+        from ..database.project_data_repository import ProjectDataRepository
+        self.project_data_repository = ProjectDataRepository(self.db)
+        self.project_data_aggregator = ProjectDataAggregator(
+            project_data_repository=self.project_data_repository,
+            data_aggregation_repository=self.data_aggregation_repository
         )
         
         # Ensure the data_aggregation_repository has access to the knowledge base
@@ -1134,6 +1143,21 @@ class ResearchOrchestrator:
             
             # Update task status to completed
             await self.db.update_research_task_status(task_id, "completed")
+            
+            # Trigger project-level entity consolidation for data aggregation tasks
+            try:
+                # Get the project ID for this task
+                task_details = await self.db.get_research_task(task_id)
+                if task_details and task_details.get('project_id'):
+                    project_id = task_details['project_id']
+                    logger.info(f"Triggering project-level entity consolidation for project {project_id}")
+                    await self.project_data_aggregator.consolidate_project_entities(project_id)
+                    logger.info(f"Completed project-level entity consolidation for project {project_id}")
+                else:
+                    logger.warning(f"No project_id found for task {task_id}, skipping project-level consolidation")
+            except Exception as consolidation_error:
+                logger.error(f"Failed to consolidate project entities for task {task_id}: {consolidation_error}", exc_info=True)
+                # Don't fail the entire task if consolidation fails
             
             logger.info(f"Completed data aggregation workflow for task {task_id}")
             return result

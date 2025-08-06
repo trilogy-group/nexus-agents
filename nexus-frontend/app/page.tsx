@@ -8,6 +8,7 @@ import { TaskDetails } from '@/components/TaskDetails';
 import { LayoutWrapper } from '@/components/LayoutWrapper';
 import { CreateProjectModal } from '@/components/CreateProjectModal';
 import { CreateTaskForm } from '@/components/CreateTaskForm';
+import { ProjectEntityExplorer } from '@/components/ProjectEntityExplorer';
 import { Plus } from 'lucide-react';
 import Image from 'next/image';
 
@@ -25,6 +26,7 @@ export default function Home() {
   } = useAppStore();
   
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<'tasks' | 'entities' | 'knowledge'>('tasks');
 
   // Fetch all projects on mount
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
@@ -105,45 +107,99 @@ export default function Home() {
             }}
           />
 
-          {projectTasks.length > 0 && (
-            <div className="bg-white border border-gray-200 rounded-lg">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h2 className="text-lg font-medium text-gray-900">Research Tasks</h2>
-              </div>
-              <div className="divide-y divide-gray-200">
-                {projectTasks.map((task) => (
-                  <div key={task.task_id} className="p-6 hover:bg-gray-50 transition-colors">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h3 className="text-lg font-medium text-gray-900 mb-2">
-                          {task.title}
-                        </h3>
-                        <p className="text-gray-600 mb-3">{task.research_query}</p>
-                        <div className="flex items-center gap-4 text-sm text-gray-500">
-                          <span>Status: <span className={`font-medium ${
-                            task.status === 'completed' ? 'text-green-600' :
-                            task.status === 'failed' ? 'text-red-600' :
-                            task.status === 'running' ? 'text-blue-600' :
-                            'text-gray-600'
-                          }`}>{task.status}</span></span>
-                          <span>Created: {new Date(task.created_at).toLocaleDateString()}</span>
-                          {task.research_type && (
-                            <span>Type: {task.research_type.replace('_', ' ')}</span>
-                          )}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => setSelectedTask(task.task_id)}
-                        className="ml-4 px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                      >
-                        View Details
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          {/* Project Tabs */}
+          <div className="bg-white border border-gray-200 rounded-lg">
+            <div className="border-b border-gray-200">
+              <nav className="flex space-x-8 px-6" aria-label="Tabs">
+                <button
+                  onClick={() => setActiveTab('tasks')}
+                  className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                    activeTab === 'tasks'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Research Tasks ({projectTasks.length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('entities')}
+                  className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                    activeTab === 'entities'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Consolidated Entities
+                </button>
+                <button
+                  onClick={() => setActiveTab('knowledge')}
+                  className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                    activeTab === 'knowledge'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Knowledge Graph
+                </button>
+              </nav>
             </div>
-          )}
+
+            <div className="p-6">
+              {activeTab === 'tasks' && (
+                <div>
+                  {projectTasks.length > 0 ? (
+                    <div className="divide-y divide-gray-200">
+                      {projectTasks.map((task) => (
+                        <div key={task.task_id} className="py-6 first:pt-0 last:pb-0 hover:bg-gray-50 transition-colors rounded-lg px-4 -mx-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                                {task.title}
+                              </h3>
+                              <p className="text-gray-600 mb-3">{task.research_query}</p>
+                              <div className="flex items-center gap-4 text-sm text-gray-500">
+                                <span>Status: <span className={`font-medium ${
+                                  task.status === 'completed' ? 'text-green-600' :
+                                  task.status === 'failed' ? 'text-red-600' :
+                                  task.status === 'running' ? 'text-blue-600' :
+                                  'text-gray-600'
+                                }`}>{task.status}</span></span>
+                                <span>Created: {new Date(task.created_at).toLocaleDateString()}</span>
+                                {task.research_type && (
+                                  <span>Type: {task.research_type.replace('_', ' ')}</span>
+                                )}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => setSelectedTask(task.task_id)}
+                              className="ml-4 px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            >
+                              View Details
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-12">
+                      <p className="text-gray-500">No research tasks yet. Create your first task above.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'entities' && (
+                <ProjectEntityExplorer projectId={selectedProjectId} />
+              )}
+
+              {activeTab === 'knowledge' && (
+                <div className="text-center py-12">
+                  <p className="text-gray-500">Project knowledge graph visualization coming soon...</p>
+                  <p className="text-sm text-gray-400 mt-2">This will show consolidated DOK taxonomy and insights across all tasks.</p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </LayoutWrapper>
     );
