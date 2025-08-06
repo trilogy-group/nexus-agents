@@ -157,6 +157,62 @@ This architecture enables stable multi-agent concurrent operations with proper d
 - **Multiple Export Formats**: CSV, JSON, BrainLift-compatible knowledge graphs
 - **Real-time Progress Tracking**: Live updates on research task status
 
+## 🔬 Research Task Types
+
+Nexus Agents supports two distinct research methodologies, each optimized for different use cases:
+
+### 1. Analytical Reports (Traditional Research)
+
+Structured knowledge analysis with taxonomic organization for strategic insights.
+
+```mermaid
+flowchart LR
+    A[Research Question] --> B[Content Analysis]
+    B --> C[DOK Classification]
+    C --> D[Knowledge Tree]
+    D --> E[Insights Generation]
+    E --> F[BrainLift Export]
+    
+    A1[Topic Focus & Scope] -.-> A
+    B1[Source Analysis & Synthesis] -.-> B
+    C1[Taxonomic Categorization] -.-> C
+    D1[Relationship Mapping] -.-> D
+    E1[Strategic Analysis] -.-> E
+    F1[Structured Export] -.-> F
+```
+
+**Key Features:**
+- DOK taxonomy integration (Webb's Depth of Knowledge)
+- Hierarchical knowledge tree construction
+- Strategic insights and "Spiky POVs" generation
+- BrainLift-compatible structured exports
+- Cross-referenced analysis with source provenance
+
+### 2. Data Aggregation (Entity-Focused Research)
+
+Systematic entity and attribute extraction within defined search spaces.
+
+```mermaid
+flowchart LR
+    A[Search Space] --> B[Geographic Decomposition]
+    B --> C[Entity Discovery]
+    C --> D[Attribute Extraction]
+    D --> E[Consolidation]
+    
+    A1[Domain Query Definition] -.-> A
+    B1[State/County/Local Space Division] -.-> B
+    C1[Domain-specific Entity Recognition] -.-> C
+    D1[Targeted Data Attribute Mining] -.-> D
+    E1[Project-level Deduplication] -.-> E
+```
+
+**Key Features:**
+- ESPAI methodology (Enumerate, Parse, Search, Iterate)
+- Hierarchical geographic decomposition
+- Domain-specific business logic integration
+- Project-level entity consolidation and deduplication
+- CSV export with data lineage and confidence scoring
+
 ## 📦 Installation
 
 ### Prerequisites
