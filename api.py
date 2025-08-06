@@ -57,10 +57,12 @@ from src.orchestration.parallel_task_coordinator import ParallelTaskCoordinator
 from src.orchestration.rate_limiter import RateLimiter
 from src.orchestration.communication_bus import CommunicationBus
 from src.api.dok_taxonomy_endpoints import router as dok_router
+from src.api.project_data_endpoints import router as project_data_router
 from src.agents.research.dok_workflow_orchestrator import DOKWorkflowOrchestrator
 from src.models.research_types import ResearchType, DataAggregationConfig
 from src.llm import LLMClient
 from src.export.csv_exporter import CSVExporter
+from src.export.project_csv_exporter import ProjectCSVExporter
 
 # Load environment variables
 load_dotenv(override=True)
@@ -80,12 +82,16 @@ app.add_middleware(
 # Include DOK taxonomy router
 app.include_router(dok_router)
 
+# Include project data router
+app.include_router(project_data_router)
+
 # Global instances
 redis_client: Optional[redis.Redis] = None
 task_queue_key = "nexus:task_queue"
 global_research_orchestrator: Optional[ResearchOrchestrator] = None
 global_task_coordinator: Optional[ParallelTaskCoordinator] = None
 global_csv_exporter: Optional[CSVExporter] = None
+global_project_csv_exporter: Optional[ProjectCSVExporter] = None
 
 
 # Define the API models
@@ -233,7 +239,14 @@ async def startup_event():
         # Initialize CSV exporter with data aggregation repository
         from src.database.data_aggregation_repository import DataAggregationRepository
         data_aggregation_repository = DataAggregationRepository(global_kb)
+        global global_csv_exporter
         global_csv_exporter = CSVExporter(data_aggregation_repository=data_aggregation_repository)
+        
+        # Initialize project CSV exporter with project data repository
+        from src.database.project_data_repository import ProjectDataRepository
+        project_data_repository = ProjectDataRepository()
+        global global_project_csv_exporter
+        global_project_csv_exporter = ProjectCSVExporter(project_data_repository=project_data_repository)
         
         # Initialize consolidated Research Orchestrator with enhanced features
         global_research_orchestrator = ResearchOrchestrator(
@@ -800,6 +813,54 @@ async def get_project_knowledge_graph(project_id: str):
             }
         
         return knowledge_graph
+
+
+@app.get("/projects/{project_id}/entities")
+async def get_project_entities(project_id: str):
+    """Get all consolidated entities for a project."""
+    from src.database.project_data_repository import ProjectDataRepository
+    from pydantic import BaseModel
+    from typing import Dict, List, Any, Optional
+    
+    # Response model for project entities
+    class ProjectEntityResponse(BaseModel):
+        project_id: str
+        name: str
+        unique_identifier: str
+        entity_type: str
+        consolidated_attributes: Dict[str, Any]
+        source_tasks: List[str]
+        confidence_score: float
+        data_lineage: Optional[Dict[str, Any]] = None
+        created_at: Optional[str] = None
+        updated_at: Optional[str] = None
+    
+    async with get_kb() as kb:
+        # Check if project exists
+        project = await kb.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Get project entities using the repository
+        project_repo = ProjectDataRepository(kb)
+        entities = await project_repo.get_project_entities(project_id)
+        
+        # Format the response with proper data conversion
+        return [
+            ProjectEntityResponse(
+                project_id=str(entity['project_id']),
+                name=entity['name'],
+                unique_identifier=entity.get('unique_identifier') or f"{entity['name']}_{entity['entity_type']}",
+                entity_type=entity['entity_type'],
+                consolidated_attributes=entity['consolidated_attributes'],
+                source_tasks=entity['source_tasks'],
+                confidence_score=entity['confidence_score'],
+                data_lineage=entity.get('data_lineage'),
+                created_at=entity['created_at'].isoformat() if entity.get('created_at') else None,
+                updated_at=entity['updated_at'].isoformat() if entity.get('updated_at') else None
+            ).dict()
+            for entity in entities
+        ]
 
 
 @app.put("/projects/{project_id}/knowledge")
