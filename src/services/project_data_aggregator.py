@@ -76,11 +76,15 @@ class ProjectDataAggregator:
                 logger.info(f"No entities found across tasks in project {project_id}")
                 return []
             
+            logger.info(f"Total entities collected from all tasks: {len(all_entities)}")
+            
             # Deduplicate entities
             deduplicated_entities = await self._deduplicate_entities(all_entities)
+            logger.info(f"Entities after deduplication: {len(deduplicated_entities)}")
             
             # Merge attributes for duplicate entities
             consolidated_entities = await self._merge_entity_attributes(deduplicated_entities)
+            logger.info(f"Final consolidated entities: {len(consolidated_entities)}")
             
             # Store consolidated entities in project_entities table
             await self._store_consolidated_entities(project_id, consolidated_entities, list(source_tasks))
@@ -265,6 +269,12 @@ class ProjectDataAggregator:
             consolidated_entities: List of consolidated entities
             source_tasks: List of task IDs that contributed to these entities
         """
+        # Clear existing project entities first to ensure fresh consolidation
+        await self.project_data_repository.clear_project_entities(project_id)
+        
+        # Clear cached CSV file to force regeneration on next export
+        await self._clear_cached_csv_file(project_id)
+        
         for entity in consolidated_entities:
             entity_data = entity.get('entity_data', {})
             if isinstance(entity_data, str):
@@ -283,5 +293,22 @@ class ProjectDataAggregator:
                 confidence_score=entity.get('confidence_score', 1.0),
                 data_lineage=entity.get('data_lineage', {})
             )
+    
+    async def _clear_cached_csv_file(self, project_id: str) -> None:
+        """
+        Clear cached CSV file for a project to force regeneration on next export.
+        
+        Args:
+            project_id: The project identifier
+        """
+        import os
+        
+        try:
+            csv_path = f"exports/project_{project_id}_consolidated.csv"
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
+                logger.info(f"Cleared cached CSV file for project {project_id}")
+        except Exception as e:
+            logger.warning(f"Could not clear cached CSV file for project {project_id}: {str(e)}")
 
 

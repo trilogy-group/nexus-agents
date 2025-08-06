@@ -70,6 +70,18 @@ class ProjectDataRepository(BaseRepository):
             logger.error(f"Error storing project entity '{name}' for project {project_id}: {str(e)}")
             return False
     
+    async def clear_project_entities(self, project_id: str) -> bool:
+        """Clear all consolidated entities for a project."""
+        query = "DELETE FROM project_entities WHERE project_id = $1"
+        
+        try:
+            await self.execute_query(query, project_id)
+            logger.info(f"Cleared all project entities for project {project_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error clearing project entities for project {project_id}: {str(e)}")
+            return False
+    
     async def get_project_entities(self, project_id: str) -> List[Dict[str, Any]]:
         """Get all consolidated entities for a project."""
         query = """
