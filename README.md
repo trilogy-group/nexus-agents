@@ -207,7 +207,7 @@ flowchart LR
 ```
 
 **Key Features:**
-- ESPAI methodology (Enumerate, Parse, Search, Iterate)
+- ESPAI methodology (Enumerate, Search, Parse, Iterate)
 - Hierarchical geographic decomposition
 - Domain-specific business logic integration
 - Project-level entity consolidation and deduplication

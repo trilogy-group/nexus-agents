@@ -26,6 +26,8 @@ interface ProjectEntity {
 export function ProjectEntityExplorer({ projectId }: ProjectEntityExplorerProps) {
   const [selectedEntityType, setSelectedEntityType] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const pageSize = 100;
   
   const { data: entities, isLoading, error } = useQuery<ProjectEntity[]>({
     queryKey: ['project-entities', projectId],
@@ -48,6 +50,23 @@ export function ProjectEntityExplorer({ projectId }: ProjectEntityExplorerProps)
                          );
     return matchesType && matchesSearch;
   }) || [];
+
+  // Pagination calculations
+  const total = filteredEntities.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, total);
+  const pagedEntities = filteredEntities.slice(startIndex, endIndex);
+
+  // Reset to page 1 when filters/search change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedEntityType, searchTerm]);
+
+  // Clamp current page if data size changes
+  useEffect(() => {
+    setCurrentPage((p) => Math.min(Math.max(1, p), totalPages));
+  }, [totalPages]);
 
   if (isLoading) {
     return (
@@ -112,6 +131,30 @@ export function ProjectEntityExplorer({ projectId }: ProjectEntityExplorerProps)
             </select>
           </div>
         </div>
+
+        {/* Pagination controls (top) */}
+        <div className="flex items-center justify-between mt-2">
+          <div className="text-sm text-gray-600">
+            Showing {total === 0 ? 0 : startIndex + 1}–{endIndex} of {total}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage <= 1}
+            >
+              Previous
+            </button>
+            <span className="text-sm text-gray-600">Page {currentPage} of {totalPages}</span>
+            <button
+              className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages}
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Entity List */}
@@ -121,7 +164,7 @@ export function ProjectEntityExplorer({ projectId }: ProjectEntityExplorerProps)
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredEntities.map(entity => (
+          {pagedEntities.map(entity => (
             <div key={entity.entity_id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
               <div className="flex justify-between items-start mb-2">
                 <h3 className="font-semibold text-gray-800">{entity.name}</h3>

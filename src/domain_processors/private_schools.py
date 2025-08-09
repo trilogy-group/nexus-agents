@@ -14,7 +14,7 @@ class PrivateSchoolsProcessor(DomainProcessor):
     """Domain-specific processing for private schools."""
     
     KNOWN_SOURCES = {
-        "nces": "https://nces.ed.gov/privateSchoolSearch/",
+        "nces": "https://nces.ed.gov/surveys/pss/privateschoolsearch/",
         "privateschoolreview": "https://www.privateschoolreview.com/",
         "niche": "https://www.niche.com/k12/search/best-private-schools/"
     }
