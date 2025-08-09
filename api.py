@@ -85,6 +85,10 @@ app.include_router(dok_router)
 # Include project data router
 app.include_router(project_data_router)
 
+# Include monitoring WebSocket router
+from src.api.monitoring_ws import router as monitoring_router
+app.include_router(monitoring_router)
+
 # Global instances
 redis_client: Optional[redis.Redis] = None
 task_queue_key = "nexus:task_queue"

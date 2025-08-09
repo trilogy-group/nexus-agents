@@ -12,6 +12,8 @@ import redis.asyncio as aioredis
 
 from .rate_limiter import RateLimiter
 from .task_types import Task, TaskStatus, TaskResult, TaskType
+from ..monitoring.event_bus import EventBus
+from ..monitoring.models import MonitoringEventType
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,14 @@ class ParallelTaskCoordinator:
         self._shutdown = False
         self.data_aggregation_repository = None
         self.dok_repository = None
+        
+        # Initialize event bus for monitoring
+        self.event_bus = EventBus(redis_client)
+        
+        # Heartbeat configuration
+        self.heartbeat_interval = int(os.getenv("MONITORING_HEARTBEAT_INTERVAL_SEC", "10"))
+        self.heartbeat_ttl = int(os.getenv("MONITORING_HEARTBEAT_TTL_SEC", "30"))
+        
         logger.info("ParallelTaskCoordinator initialized with Redis client and rate limiter")
     
     def _get_queue_key(self, priority: int) -> str:
@@ -56,6 +66,10 @@ class ParallelTaskCoordinator:
             if priority != 0:
                 task.priority = priority
             
+            # Resolve parent task ID and project ID for monitoring
+            parent_task_id = task.parent_task_id or task.payload.get('task_id')
+            project_id = await self._resolve_project_id(task, parent_task_id)
+            
             # Serialize task
             task_data = task.model_dump(mode='json')
             task_json = json.dumps(task_data)
@@ -72,10 +86,35 @@ class ParallelTaskCoordinator:
             data_key = f"{self.TASK_STATUS_PREFIX}:{task.id}:data"
             pipeline.set(data_key, task_json, ex=3600)
             
+            # Add to task group for parent tracking
+            if parent_task_id:
+                group_key = f"nexus:task_group:{parent_task_id}"
+                pipeline.sadd(group_key, task.id)
+                pipeline.expire(group_key, 86400)  # 24 hour TTL
+            
             # Log the exact Redis keys being used for debugging
             logger.debug(f"Task {task.id}: queue_key={queue_key}, status_key={status_key}, data_key={data_key}")
         
         await pipeline.execute()
+        
+        # Publish monitoring events for each task
+        for task in tasks:
+            parent_task_id = task.parent_task_id or task.payload.get('task_id')
+            project_id = await self._resolve_project_id(task, parent_task_id)
+            
+            await self.event_bus.publish_task_event(
+                event_type=MonitoringEventType.TASK_ENQUEUED.value,
+                task_id=task.id,
+                parent_task_id=parent_task_id,
+                project_id=project_id,
+                task_type=task.type.value if hasattr(task.type, 'value') else str(task.type),
+                status=TaskStatus.PENDING.value,
+                meta={
+                    "priority": task.priority,
+                    "queue": self._get_queue_key(task.priority)
+                }
+            )
+        
         logger.info(f"Submitted {len(tasks)} tasks to queue")
         # Log task IDs for verification
         task_ids = [task.id for task in tasks]
@@ -84,6 +123,9 @@ class ParallelTaskCoordinator:
     async def process_tasks(self):
         """Process tasks from queue respecting rate limits."""
         logger.info(f"Starting task processing with {self.worker_pool_size} workers")
+        
+        # Start queue depth monitoring
+        await self.start_queue_depth_monitor()
         
         # Start worker tasks
         for i in range(self.worker_pool_size):
@@ -177,23 +219,48 @@ class ParallelTaskCoordinator:
         """Worker coroutine that processes tasks."""
         logger.info(f"Worker {worker_id} started")
         
-        while not self._shutdown:
+        # Publish worker started event
+        await self.event_bus.publish_worker_event(
+            event_type=MonitoringEventType.WORKER_STARTED.value,
+            worker_id=worker_id,
+            message=f"Worker {worker_id} started"
+        )
+        
+        # Start heartbeat task
+        heartbeat_task = asyncio.create_task(self._worker_heartbeat(worker_id))
+        
+        try:
+            while not self._shutdown:
+                try:
+                    # Get task from queue
+                    task = await self._get_next_task()
+                    if not task:
+                        await asyncio.sleep(0.1)
+                        continue
+                    
+                    # Process task
+                    await self._process_task(task, worker_id)
+                    
+                except asyncio.CancelledError:
+                    logger.info(f"Worker {worker_id} cancelled")
+                    break
+                except Exception as e:
+                    logger.error(f"Worker {worker_id} error: {e}", exc_info=True)
+                    await asyncio.sleep(1)
+        finally:
+            # Cancel heartbeat task
+            heartbeat_task.cancel()
             try:
-                # Get task from queue
-                task = await self._get_next_task()
-                if not task:
-                    await asyncio.sleep(0.1)
-                    continue
-                
-                # Process task
-                await self._process_task(task, worker_id)
-                
+                await heartbeat_task
             except asyncio.CancelledError:
-                logger.info(f"Worker {worker_id} cancelled")
-                break
-            except Exception as e:
-                logger.error(f"Worker {worker_id} error: {e}", exc_info=True)
-                await asyncio.sleep(1)
+                pass
+            
+            # Publish worker stopped event
+            await self.event_bus.publish_worker_event(
+                event_type=MonitoringEventType.WORKER_STOPPED.value,
+                worker_id=worker_id,
+                message=f"Worker {worker_id} stopped"
+            )
         
         logger.info(f"Worker {worker_id} stopped")
     
@@ -216,10 +283,29 @@ class ParallelTaskCoordinator:
         logger.info(f"Worker {worker_id} processing task {task.id} (type: {task.type})")
         logger.info(f"Task payload: {task.payload}")
         
+        # Resolve monitoring metadata
+        parent_task_id = task.parent_task_id or task.payload.get('task_id')
+        project_id = await self._resolve_project_id(task, parent_task_id)
+        task_type_str = task.type.value if hasattr(task.type, 'value') else str(task.type)
+        
+        start_time = datetime.now(timezone.utc)
+        
         try:
             # Update task status
             await self._update_task_status(task.id, TaskStatus.PROCESSING)
-            task.started_at = datetime.now(timezone.utc)
+            task.started_at = start_time
+            
+            # Publish task started event
+            await self.event_bus.publish_task_event(
+                event_type=MonitoringEventType.TASK_STARTED.value,
+                task_id=task.id,
+                parent_task_id=parent_task_id,
+                project_id=project_id,
+                task_type=task_type_str,
+                worker_id=worker_id,
+                status=TaskStatus.PROCESSING.value,
+                retry_count=task.retry_count
+            )
             
             llm_task_types = [TaskType.SUMMARIZATION, TaskType.DOK_CATEGORIZATION, 
                              TaskType.ENTITY_EXTRACTION, TaskType.REASONING]
@@ -264,10 +350,28 @@ class ParallelTaskCoordinator:
                 await self._store_data_aggregation_search_result(task, result)
             
             
+            # Calculate duration
+            duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+            
+            # Publish task completed event
+            await self.event_bus.publish_task_event(
+                event_type=MonitoringEventType.TASK_COMPLETED.value,
+                task_id=task.id,
+                parent_task_id=parent_task_id,
+                project_id=project_id,
+                task_type=task_type_str,
+                worker_id=worker_id,
+                status=TaskStatus.COMPLETED.value,
+                duration_ms=duration_ms
+            )
+            
             logger.info(f"Worker {worker_id} completed task {task.id}")
             
         except Exception as e:
             logger.error(f"Worker {worker_id} failed task {task.id}: {e}", exc_info=True)
+            
+            # Calculate duration
+            duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
             
             # Update task status
             task.error = str(e)
@@ -277,11 +381,40 @@ class ParallelTaskCoordinator:
                 # Requeue for retry
                 task.status = TaskStatus.RETRYING
                 await self.submit_tasks([task])
+                
+                # Publish retry event
+                await self.event_bus.publish_task_event(
+                    event_type=MonitoringEventType.TASK_RETRY.value,
+                    task_id=task.id,
+                    parent_task_id=parent_task_id,
+                    project_id=project_id,
+                    task_type=task_type_str,
+                    worker_id=worker_id,
+                    status=TaskStatus.RETRYING.value,
+                    retry_count=task.retry_count,
+                    duration_ms=duration_ms,
+                    error=str(e)
+                )
+                
                 logger.info(f"Requeued task {task.id} for retry ({task.retry_count}/{task.max_retries})")
             else:
                 # Mark as failed
                 await self._update_task_status(task.id, TaskStatus.FAILED)
                 await self._store_task_error(task.id, str(e))
+                
+                # Publish task failed event
+                await self.event_bus.publish_task_event(
+                    event_type=MonitoringEventType.TASK_FAILED.value,
+                    task_id=task.id,
+                    parent_task_id=parent_task_id,
+                    project_id=project_id,
+                    task_type=task_type_str,
+                    worker_id=worker_id,
+                    status=TaskStatus.FAILED.value,
+                    retry_count=task.retry_count,
+                    duration_ms=duration_ms,
+                    error=str(e)
+                )
     
     async def _execute_task(self, task: Task) -> Dict[str, Any]:
         """Execute the actual task."""
@@ -531,3 +664,91 @@ class ParallelTaskCoordinator:
             logger.error(f"Task payload: {task.payload}")
             logger.error(f"Result data: {result}")
             raise  # Re-raise the exception so it's properly handled
+    
+    async def _resolve_project_id(self, task: Task, parent_task_id: Optional[str]) -> Optional[str]:
+        """Resolve project ID for monitoring events."""
+        try:
+            # Try task payload first
+            project_id = task.payload.get('project_id')
+            if project_id:
+                return project_id
+            
+            # Try cached metadata
+            if parent_task_id:
+                meta_key = f"nexus:task_meta:{parent_task_id}"
+                cached_project_id = await self.redis_client.hget(meta_key, "project_id")
+                if cached_project_id:
+                    return cached_project_id.decode() if isinstance(cached_project_id, bytes) else cached_project_id
+                
+                # Try knowledge base lookup (if available)
+                # Note: This requires access to the knowledge base, which we'll handle gracefully
+                try:
+                    # Import here to avoid circular imports
+                    from ...api import global_kb
+                    if global_kb:
+                        task_data = await global_kb.get_research_task(parent_task_id)
+                        if task_data and task_data.get('project_id'):
+                            project_id = task_data['project_id']
+                            # Cache for future use
+                            await self.redis_client.hset(meta_key, "project_id", project_id)
+                            await self.redis_client.expire(meta_key, 86400)  # 24 hour TTL
+                            return project_id
+                except Exception as e:
+                    logger.debug(f"Could not resolve project_id via KB for {parent_task_id}: {e}")
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Error resolving project_id: {e}")
+            return None
+    
+    async def _worker_heartbeat(self, worker_id: int):
+        """Send periodic heartbeat for worker."""
+        while not self._shutdown:
+            try:
+                # Store heartbeat in Redis with TTL
+                heartbeat_key = f"nexus:worker:heartbeat:{worker_id}"
+                await self.redis_client.set(heartbeat_key, "active", ex=self.heartbeat_ttl)
+                
+                # Publish heartbeat event
+                await self.event_bus.publish_worker_event(
+                    event_type=MonitoringEventType.WORKER_HEARTBEAT.value,
+                    worker_id=worker_id
+                )
+                
+                await asyncio.sleep(self.heartbeat_interval)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Worker {worker_id} heartbeat error: {e}")
+                await asyncio.sleep(self.heartbeat_interval)
+    
+    async def start_queue_depth_monitor(self):
+        """Start background task to monitor queue depths."""
+        if not hasattr(self, '_queue_monitor_task') or self._queue_monitor_task is None:
+            self._queue_monitor_task = asyncio.create_task(self._queue_depth_monitor())
+    
+    async def _queue_depth_monitor(self):
+        """Monitor queue depths and publish updates."""
+        while not self._shutdown:
+            try:
+                # Get queue depths
+                queue_stats = {}
+                for priority_name in ["high_priority", "normal_priority", "low_priority"]:
+                    queue_key = f"{self.TASK_QUEUE_PREFIX}:{priority_name}"
+                    depth = await self.redis_client.llen(queue_key)
+                    queue_stats[priority_name] = depth
+                
+                # Publish queue depth update
+                await self.event_bus.publish_stats_snapshot(
+                    queue_stats=queue_stats
+                )
+                
+                await asyncio.sleep(10)  # Update every 10 seconds
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Queue depth monitor error: {e}")
+                await asyncio.sleep(10)
