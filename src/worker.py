@@ -369,18 +369,10 @@ class ResearchWorker:
             updated_at=datetime.now(timezone.utc)
         )
         
-        # Publish status update event
-        status_update = {
-            "task_id": task_id,
-            "status": status.value,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "worker_id": self.worker_id
-        }
-        
-        await self.redis_client.publish(
-            f"nexus:task_status:{task_id}",
-            json.dumps(status_update)
-        )
+        # Write status to standardized Redis key for monitoring compatibility
+        # Standard key: nexus:task:{task_id}:status
+        status_key = f"nexus:task:{task_id}:status"
+        await self.redis_client.set(status_key, status.value, ex=3600)
 
 
 def setup_signal_handlers(worker: ResearchWorker):
