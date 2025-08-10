@@ -112,7 +112,15 @@ class EventBus:
         
         logger.error(f"Failed to publish to {channel} after {self.max_retries + 1} attempts")
         return False
-    
+
+    def _s(self, value: Optional[Any]) -> Optional[str]:
+        """Coerce UUIDs and other identifiers to strings while preserving None.
+        Avoids Pydantic validation errors when callers pass UUID objects.
+        """
+        if value is None:
+            return None
+        return value if isinstance(value, str) else str(value)
+
     async def publish_worker_event(self, event_type: str, worker_id: int, 
                                  current_task_id: Optional[str] = None,
                                  message: Optional[str] = None) -> bool:
@@ -120,7 +128,7 @@ class EventBus:
         event = MonitoringEvent(
             event_type=event_type,
             worker_id=worker_id,
-            task_id=current_task_id,
+            task_id=self._s(current_task_id),
             message=message
         )
         return await self.publish(event)
@@ -138,9 +146,9 @@ class EventBus:
         """Publish a task-related event."""
         event = MonitoringEvent(
             event_type=event_type,
-            task_id=task_id,
-            parent_task_id=parent_task_id,
-            project_id=project_id,
+            task_id=self._s(task_id),
+            parent_task_id=self._s(parent_task_id),
+            project_id=self._s(project_id),
             task_type=task_type,
             worker_id=worker_id,
             status=status,
@@ -149,7 +157,7 @@ class EventBus:
             error=error,
             meta=meta
         )
-        return await self.publish(event, project_id=project_id)
+        return await self.publish(event, project_id=self._s(project_id))
     
     async def publish_phase_event(self, event_type: str, phase: str,
                                 parent_task_id: str,
@@ -160,12 +168,12 @@ class EventBus:
         event = MonitoringEvent(
             event_type=event_type,
             phase=phase,
-            parent_task_id=parent_task_id,
-            project_id=project_id,
+            parent_task_id=self._s(parent_task_id),
+            project_id=self._s(project_id),
             counts=counts,
             message=message
         )
-        return await self.publish(event, project_id=project_id)
+        return await self.publish(event, project_id=self._s(project_id))
     
     async def publish_stats_snapshot(self, counts: Optional[Dict[str, int]] = None,
                                    queue_stats: Optional[Dict[str, int]] = None,
@@ -175,10 +183,10 @@ class EventBus:
         """Publish a statistics snapshot event."""
         event = MonitoringEvent(
             event_type="stats_snapshot",
-            parent_task_id=parent_task_id,
-            project_id=project_id,
+            parent_task_id=self._s(parent_task_id),
+            project_id=self._s(project_id),
             counts=counts,
             queue=queue_stats,
             meta={"workers_online": workers_online} if workers_online is not None else None
         )
-        return await self.publish(event, project_id=project_id)
+        return await self.publish(event, project_id=self._s(project_id))

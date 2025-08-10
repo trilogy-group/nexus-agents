@@ -11,12 +11,20 @@ import redis.asyncio as redis
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from fastapi.websockets import WebSocketState
 
-from ..monitoring.models import MonitoringEvent, GlobalStats, QueueStats
+from ..monitoring.models import MonitoringEvent, GlobalStats, QueueStats, utc_now
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Injected Redis client from the main API app (set on startup)
+injected_redis_client: Optional[redis.Redis] = None
+
+def set_redis_client(client: redis.Redis) -> None:
+    """Inject the Redis client from the API app to avoid import cycles."""
+    global injected_redis_client
+    injected_redis_client = client
 
 
 class MonitoringWebSocketManager:
@@ -205,7 +213,8 @@ class MonitoringWebSocketManager:
                 for websocket in connections:
                     try:
                         if websocket.client_state == WebSocketState.CONNECTED:
-                            await websocket.ping()
+                            # FastAPI/Starlette WebSocket doesn't support ping(); send lightweight keepalive
+                            await websocket.send_text(json.dumps({"type": "ping"}))
                         else:
                             self.active_connections.discard(websocket)
                     except Exception as e:
@@ -234,7 +243,7 @@ class MonitoringWebSocketManager:
             # Create snapshot event
             snapshot = {
                 "event_id": "snapshot",
-                "ts": MonitoringEvent().ts,
+                "ts": utc_now().isoformat(),
                 "event_type": "stats_snapshot",
                 "project_id": project_id,
                 "parent_task_id": task_id,
@@ -260,11 +269,10 @@ async def get_ws_manager() -> MonitoringWebSocketManager:
     """Get the global WebSocket manager instance."""
     global ws_manager
     if ws_manager is None:
-        # Import here to avoid circular imports
-        from ...api import redis_client
-        if redis_client is None:
+        # Use injected Redis client set by the API app on startup
+        if injected_redis_client is None:
             raise RuntimeError("Redis client not initialized")
-        ws_manager = MonitoringWebSocketManager(redis_client)
+        ws_manager = MonitoringWebSocketManager(injected_redis_client)
         await ws_manager.start()
     return ws_manager
 

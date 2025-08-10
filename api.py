@@ -86,7 +86,7 @@ app.include_router(dok_router)
 app.include_router(project_data_router)
 
 # Include monitoring WebSocket router
-from src.api.monitoring_ws import router as monitoring_router
+from src.api.monitoring_ws import router as monitoring_router, set_redis_client
 app.include_router(monitoring_router)
 
 # Global instances
@@ -202,6 +202,12 @@ async def startup_event():
     except Exception as e:
         print(f"Failed to connect to Redis: {e}")
         raise
+    
+    # Inject Redis client into monitoring WebSocket module
+    try:
+        set_redis_client(redis_client)
+    except Exception as e:
+        print(f"Failed to inject Redis client into monitoring_ws: {e}")
     
     # Initialize Research Orchestrator
     try:
@@ -888,8 +894,8 @@ def main():
     """Main entry point."""
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Nexus Agents API Server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
-    parser.add_argument("--port", type=int, default=12000, help="Port to bind to")
+    parser.add_argument("--host", default=os.getenv("API_HOST", "0.0.0.0"), help="Host to bind to")
+    parser.add_argument("--port", type=int, default=int(os.getenv("API_PORT", "12000")), help="Port to bind to")
     args = parser.parse_args()
     
     # Start the API server

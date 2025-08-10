@@ -126,8 +126,8 @@ def main():
     """Main entry point."""
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Nexus Agents Development API Server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
-    parser.add_argument("--port", type=int, default=12000, help="Port to bind to")
+    parser.add_argument("--host", default=os.getenv("API_HOST", "0.0.0.0"), help="Host to bind to")
+    parser.add_argument("--port", type=int, default=int(os.getenv("API_PORT", "12000")), help="Port to bind to")
     args = parser.parse_args()
     
     print(f"Starting Nexus Agents API in DEVELOPMENT MODE on {args.host}:{args.port}")

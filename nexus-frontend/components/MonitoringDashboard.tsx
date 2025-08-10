@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Activity, 
   BarChart3, 
@@ -13,9 +13,13 @@ import {
   RotateCcw,
   Trash2,
   Wifi,
-  WifiOff
+  WifiOff,
+  Timer,
+  TrendingUp
 } from 'lucide-react';
 import { useMonitoring, MonitoringEvent, TaskEvent, PhaseEvent, WorkerEvent, StatsSnapshot } from '@/hooks/useMonitoring';
+
+const DISPLAY_EVENTS_MAX = 100;
 
 interface MetricCardProps {
   title: string;
@@ -37,14 +41,14 @@ function MetricCard({ title, value, icon, color = 'blue', subtitle }: MetricCard
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-6">
       <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium text-gray-600">{title}</p>
-          <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-gray-600 truncate whitespace-nowrap">{title}</p>
+          <p className="text-2xl font-bold text-gray-900 mt-1 truncate whitespace-nowrap">{value}</p>
           {subtitle && (
-            <p className="text-xs text-gray-500 mt-1">{subtitle}</p>
+            <p className="text-xs text-gray-500 mt-1 truncate whitespace-nowrap">{subtitle}</p>
           )}
         </div>
-        <div className={`p-3 rounded-lg border ${colorClasses[color]}`}>
+        <div className={`p-2 rounded-lg border shrink-0 ${colorClasses[color]}`}>
           {icon}
         </div>
       </div>
@@ -72,7 +76,7 @@ function EventList({ events, title, maxHeight = 'max-h-96' }: EventListProps) {
           </div>
         ) : (
           <div className="divide-y divide-gray-200">
-            {events.slice().reverse().map((event, index) => (
+            {events.slice(-DISPLAY_EVENTS_MAX).reverse().map((event, index) => (
               <EventItem key={`${event.ts}-${index}`} event={event} />
             ))}
           </div>
@@ -83,6 +87,9 @@ function EventList({ events, title, maxHeight = 'max-h-96' }: EventListProps) {
 }
 
 function EventItem({ event }: { event: MonitoringEvent }) {
+  // Defensive defaults in case malformed messages slip through
+  const typeStr = typeof event.event_type === 'string' ? event.event_type : 'unknown';
+  const tsStr = typeof event.ts === 'string' ? event.ts : new Date().toISOString();
   const getEventIcon = (eventType: string) => {
     switch (eventType) {
       case 'task_enqueued':
@@ -150,8 +157,8 @@ function EventItem({ event }: { event: MonitoringEvent }) {
             {taskEvent.worker_id !== undefined && (
               <span className="text-gray-500"> - Worker {taskEvent.worker_id}</span>
             )}
-            {taskEvent.duration_ms && (
-              <span className="text-gray-500"> - {taskEvent.duration_ms}ms</span>
+            {typeof taskEvent.duration_ms === 'number' && (
+              <span className="text-gray-500"> - {(taskEvent.duration_ms / 1000).toFixed(2)}s</span>
             )}
             {taskEvent.error && (
               <div className="text-red-600 text-xs mt-1 truncate" title={taskEvent.error}>
@@ -228,15 +235,15 @@ function EventItem({ event }: { event: MonitoringEvent }) {
     <div className="px-6 py-4 hover:bg-gray-50">
       <div className="flex items-start gap-3">
         <div className="mt-0.5">
-          {getEventIcon(event.event_type)}
+          {getEventIcon(typeStr)}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className={`text-sm font-medium ${getEventColor(event.event_type)}`}>
-              {event.event_type.replace(/_/g, ' ').toUpperCase()}
+            <span className={`text-sm font-medium ${getEventColor(typeStr)}`}>
+              {typeStr.replace(/_/g, ' ').toUpperCase()}
             </span>
             <span className="text-xs text-gray-500">
-              {new Date(event.ts).toLocaleTimeString()}
+              {new Date(tsStr).toLocaleTimeString()}
             </span>
           </div>
           {formatEventData(event)}
@@ -256,13 +263,32 @@ export function MonitoringDashboard() {
     queueStats,
     taskCounts,
     activeWorkers,
+    throughputPerMin,
+    throughputWindowMin,
     error,
     connect,
     disconnect,
     clearEvents,
   } = useMonitoring();
 
-  const [activeTab, setActiveTab] = useState<'all' | 'tasks' | 'phases' | 'workers'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'tasks' | 'phases' | 'workers'>('tasks');
+
+  const durationStats = useMemo((): { median: number; p95: number; count: number } => {
+    const durations: number[] = [];
+    // Walk backwards to collect recent completions, cap at 200 for perf
+    for (let i = taskEvents.length - 1; i >= 0 && durations.length < 200; i--) {
+      const e = taskEvents[i] as TaskEvent;
+      if (e.event_type === 'task_completed' && typeof e.duration_ms === 'number') {
+        durations.push(e.duration_ms);
+      }
+    }
+    if (durations.length === 0) return { median: 0, p95: 0, count: 0 };
+    durations.sort((a, b) => a - b);
+    const mid = Math.floor(durations.length / 2);
+    const median = durations.length % 2 ? durations[mid] : (durations[mid - 1] + durations[mid]) / 2;
+    const p95 = durations[Math.floor(0.95 * (durations.length - 1))];
+    return { median, p95, count: durations.length };
+  }, [taskEvents]);
 
   const getFilteredEvents = () => {
     switch (activeTab) {
@@ -350,21 +376,21 @@ export function MonitoringDashboard() {
           color="blue"
           subtitle="Tasks waiting to be processed"
         />
-        
+
         <MetricCard
-          title="Completed Tasks"
-          value={completedTasks}
-          icon={<CheckCircle className="w-6 h-6" />}
-          color="green"
-          subtitle="Successfully completed"
+          title="Throughput"
+          value={`${throughputPerMin.toFixed(1)}/min`}
+          icon={<TrendingUp className="w-6 h-6" />}
+          color="blue"
+          subtitle={`${throughputWindowMin}m window`}
         />
-        
+
         <MetricCard
-          title="Failed Tasks"
-          value={failedTasks}
-          icon={<XCircle className="w-6 h-6" />}
-          color="red"
-          subtitle="Tasks that failed"
+          title="Task Duration"
+          value={`${(durationStats.median / 1000).toFixed(2)}s`}
+          icon={<Timer className="w-6 h-6" />}
+          color="gray"
+          subtitle={`p95 ${(durationStats.p95 / 1000).toFixed(2)}s (n=${durationStats.count})`}
         />
       </div>
 
@@ -386,32 +412,32 @@ export function MonitoringDashboard() {
       )}
 
       {/* Task Status Breakdown */}
-      {Object.keys(taskCounts).length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Task Status Breakdown</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {Object.entries(taskCounts).map(([status, count]) => {
-              const getStatusColor = (status: string) => {
-                switch (status) {
-                  case 'completed': return 'text-green-600 bg-green-50';
-                  case 'failed': return 'text-red-600 bg-red-50';
-                  case 'processing': return 'text-blue-600 bg-blue-50';
-                  case 'pending': return 'text-yellow-600 bg-yellow-50';
-                  case 'retrying': return 'text-orange-600 bg-orange-50';
-                  default: return 'text-gray-600 bg-gray-50';
-                }
-              };
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Task Status Breakdown</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+          {['pending','processing','retrying','completed','failed'].map((status) => {
+            const pendingFromQueue = Object.values(queueStats || {}).reduce((a, b) => a + (typeof b === 'number' ? b : 0), 0);
+            const count = status === 'pending' ? pendingFromQueue : (taskCounts[status] ?? 0);
+            const getStatusColor = (status: string) => {
+              switch (status) {
+                case 'completed': return 'text-green-600 bg-green-50';
+                case 'failed': return 'text-red-600 bg-red-50';
+                case 'processing': return 'text-blue-600 bg-blue-50';
+                case 'pending': return 'text-yellow-600 bg-yellow-50';
+                case 'retrying': return 'text-orange-600 bg-orange-50';
+                default: return 'text-gray-600 bg-gray-50';
+              }
+            };
 
-              return (
-                <div key={status} className={`p-3 rounded-lg ${getStatusColor(status)}`}>
-                  <div className="text-sm font-medium capitalize">{status}</div>
-                  <div className="text-2xl font-bold">{count}</div>
-                </div>
-              );
-            })}
-          </div>
+            return (
+              <div key={status} className={`p-2 rounded-lg ${getStatusColor(status)}`}>
+                <div className="text-xs md:text-sm font-medium capitalize truncate whitespace-nowrap">{status}</div>
+                <div className="text-xl md:text-2xl font-bold">{count}</div>
+              </div>
+            );
+          })}
         </div>
-      )}
+      </div>
 
       {/* Event Stream */}
       <div className="bg-white border border-gray-200 rounded-lg">
@@ -443,7 +469,7 @@ export function MonitoringDashboard() {
             </div>
           ) : (
             <div className="divide-y divide-gray-200">
-              {getFilteredEvents().slice().reverse().map((event, index) => (
+              {getFilteredEvents().slice(-DISPLAY_EVENTS_MAX).reverse().map((event, index) => (
                 <EventItem key={`${event.ts}-${index}`} event={event} />
               ))}
             </div>

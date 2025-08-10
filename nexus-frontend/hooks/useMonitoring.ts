@@ -64,7 +64,12 @@ export interface MonitoringState {
   statsSnapshots: StatsSnapshot[];
   queueStats: Record<string, number>;
   taskCounts: Record<string, number>;
+  taskStatusById: Record<string, string>; // current status per task_id for accurate breakdown
   activeWorkers: Set<number>;
+  // Throughput metrics
+  throughputWindowMin: number; // rolling window in minutes (default 15)
+  throughputPerMin: number; // tasks/min over the selected window
+  completedTimestamps: number[]; // ring buffer of last 500 completion timestamps (ms)
   error: string | null;
 }
 
@@ -80,7 +85,11 @@ export function useMonitoring() {
     statsSnapshots: [],
     queueStats: {},
     taskCounts: {},
+    taskStatusById: {},
     activeWorkers: new Set(),
+    throughputWindowMin: 15,
+    throughputPerMin: 0,
+    completedTimestamps: [],
     error: null,
   });
 
@@ -100,7 +109,9 @@ export function useMonitoring() {
       const newStatsSnapshots = [...prev.statsSnapshots];
       let newQueueStats = { ...prev.queueStats };
       let newTaskCounts = { ...prev.taskCounts };
+      let newTaskStatusById = { ...prev.taskStatusById };
       let newActiveWorkers = new Set(prev.activeWorkers);
+      let newCompletedTimestamps = [...prev.completedTimestamps];
 
       switch (event.event_type) {
         case 'task_enqueued':
@@ -111,10 +122,28 @@ export function useMonitoring() {
           newTaskEvents.push(event as TaskEvent);
           newTaskEvents.splice(0, Math.max(0, newTaskEvents.length - MAX_EVENTS));
           
-          // Update task counts
+          // Update current-status breakdown using per-task map
           const taskEvent = event as TaskEvent;
-          if (taskEvent.status) {
-            newTaskCounts[taskEvent.status] = (newTaskCounts[taskEvent.status] || 0) + 1;
+          const currentStatus = taskEvent.status;
+          const taskId = taskEvent.task_id;
+          if (taskId && currentStatus) {
+            const prevStatus = newTaskStatusById[taskId];
+            if (prevStatus !== currentStatus) {
+              if (prevStatus) {
+                newTaskCounts[prevStatus] = Math.max(0, (newTaskCounts[prevStatus] || 0) - 1);
+              }
+              newTaskCounts[currentStatus] = (newTaskCounts[currentStatus] || 0) + 1;
+              newTaskStatusById[taskId] = currentStatus;
+            }
+          }
+
+          // Update throughput ring buffer on completion
+          if (event.event_type === 'task_completed') {
+            const tsMs = Date.parse(event.ts);
+            newCompletedTimestamps.push(Number.isFinite(tsMs) ? tsMs : Date.now());
+            if (newCompletedTimestamps.length > 500) {
+              newCompletedTimestamps.splice(0, newCompletedTimestamps.length - 500);
+            }
           }
           break;
 
@@ -150,11 +179,17 @@ export function useMonitoring() {
           if (statsEvent.queue) {
             newQueueStats = { ...statsEvent.queue };
           }
-          if (statsEvent.counts) {
-            newTaskCounts = { ...newTaskCounts, ...statsEvent.counts };
-          }
+          // Do not merge counts from snapshots into taskCounts to avoid mixing
+          // snapshot-based totals with live per-task status. If needed, we can
+          // expose snapshot counts separately in the UI.
           break;
       }
+
+      // Recompute throughput based on selected window
+      const now = Date.now();
+      const windowMs = prev.throughputWindowMin * 60_000;
+      const inWindow = newCompletedTimestamps.filter(ts => now - ts <= windowMs).length;
+      const newThroughputPerMin = prev.throughputWindowMin > 0 ? inWindow / prev.throughputWindowMin : 0;
 
       return {
         ...prev,
@@ -165,7 +200,10 @@ export function useMonitoring() {
         statsSnapshots: newStatsSnapshots,
         queueStats: newQueueStats,
         taskCounts: newTaskCounts,
+        taskStatusById: newTaskStatusById,
         activeWorkers: newActiveWorkers,
+        completedTimestamps: newCompletedTimestamps,
+        throughputPerMin: newThroughputPerMin,
       };
     });
   }, []);
@@ -178,8 +216,9 @@ export function useMonitoring() {
     try {
       // Get WebSocket URL from environment or use default
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsHost = process.env.NEXT_PUBLIC_WS_HOST || window.location.host;
-      const wsUrl = `${wsProtocol}//${wsHost}/ws/monitor`;
+      const apiHost = process.env.NEXT_PUBLIC_API_HOST || 'localhost';
+      const apiPort = process.env.NEXT_PUBLIC_API_PORT || '12000';
+      const wsUrl = `${wsProtocol}//${apiHost}${apiPort ? `:${apiPort}` : ''}/ws/monitor`;
 
       wsRef.current = new WebSocket(wsUrl);
 
@@ -192,6 +231,10 @@ export function useMonitoring() {
       wsRef.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          // Ignore keepalive or malformed messages lacking an event_type
+          if (!data || typeof data !== 'object' || !('event_type' in data) || data.event_type === 'ping') {
+            return;
+          }
           addEvent(data);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
@@ -200,7 +243,7 @@ export function useMonitoring() {
 
       wsRef.current.onclose = (event) => {
         console.log('Monitoring WebSocket disconnected:', event.code, event.reason);
-        setState(prev => ({ ...prev, isConnected: false }));
+        setState(prev => ({ ...prev, isConnected: false, error: event.reason || prev.error }));
 
         // Attempt to reconnect if not a clean close
         if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
@@ -212,12 +255,12 @@ export function useMonitoring() {
         }
       };
 
-      wsRef.current.onerror = (error) => {
-        console.error('Monitoring WebSocket error:', error);
-        setState(prev => ({ 
-          ...prev, 
-          error: 'WebSocket connection error',
-          isConnected: false 
+      wsRef.current.onerror = (event) => {
+        // Avoid triggering Next.js error overlay; rely on onclose for details
+        console.warn('Monitoring WebSocket error event');
+        setState(prev => ({
+          ...prev,
+          error: prev.error || 'WebSocket error',
         }));
       };
 
@@ -253,7 +296,25 @@ export function useMonitoring() {
       phaseEvents: [],
       workerEvents: [],
       statsSnapshots: [],
+      taskCounts: {},
+      taskStatusById: {},
+      completedTimestamps: [],
+      throughputPerMin: 0,
     }));
+  }, []);
+
+  const setThroughputWindow = useCallback((minutes: number) => {
+    setState(prev => {
+      const now = Date.now();
+      const windowMs = minutes * 60_000;
+      const inWindow = prev.completedTimestamps.filter(ts => now - ts <= windowMs).length;
+      const perMin = minutes > 0 ? inWindow / minutes : 0;
+      return {
+        ...prev,
+        throughputWindowMin: minutes,
+        throughputPerMin: perMin,
+      };
+    });
   }, []);
 
   // Connect on mount, disconnect on unmount
@@ -267,5 +328,8 @@ export function useMonitoring() {
     connect,
     disconnect,
     clearEvents,
+    setThroughputWindow,
+    throughputPerMin: state.throughputPerMin,
+    throughputWindowMin: state.throughputWindowMin,
   };
 }
